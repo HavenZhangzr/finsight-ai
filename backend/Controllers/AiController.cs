@@ -6,14 +6,16 @@ using Microsoft.EntityFrameworkCore;
 public class AiController : ControllerBase
 {
     private readonly AppDbContext _db;
+    private readonly IAiAssistantService _aiAssistant;
 
-    public AiController(AppDbContext db)
+    public AiController(AppDbContext db, IAiAssistantService aiAssistant)
     {
         _db = db;
+        _aiAssistant = aiAssistant;
     }
 
     [HttpPost("ask")]
-    public async Task<ActionResult<AiAskResponse>> Ask([FromBody] AiAskRequest request)
+    public async Task<ActionResult<AiAskResponse>> Ask([FromBody] AiAskRequest request, CancellationToken cancellationToken)
     {
         var question = (request.Question ?? string.Empty).Trim();
         if (question.Length == 0)
@@ -21,17 +23,40 @@ public class AiController : ControllerBase
             return BadRequest(new { message = "Question is required." });
         }
 
+        var context = await BuildPromptContextAsync(cancellationToken);
+
+        // Module 3 v2: OpenAI-backed answer generation.
+        var answer = await _aiAssistant.GenerateAnswerAsync(question, context, cancellationToken);
+
+        // Legacy mock logic intentionally kept (commented) for quick fallback if needed.
+        // var answer = BuildAnswerMock(question, context.TotalExpense, context.ChangePercent, context.TopCategory, context.Anomalies);
+
+        return Ok(new AiAskResponse
+        {
+            Answer = answer,
+            Context = new AiContextDto
+            {
+                TotalExpense = Math.Round(context.TotalExpense, 2),
+                ChangePercent = Math.Round(context.ChangePercent, 2),
+                TopCategory = context.TopCategory,
+                Anomalies = context.Anomalies
+            }
+        });
+    }
+
+    private async Task<AiPromptContext> BuildPromptContextAsync(CancellationToken cancellationToken)
+    {
         var now = DateTime.UtcNow.Date;
         var monthStart = new DateTime(now.Year, now.Month, 1);
         var prevMonthStart = monthStart.AddMonths(-1);
 
         var thisMonthExpenses = await _db.Expenses
             .Where(e => e.Date >= monthStart)
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
 
         var prevMonthExpenses = await _db.Expenses
             .Where(e => e.Date >= prevMonthStart && e.Date < monthStart)
-            .ToListAsync();
+            .ToListAsync(cancellationToken);
 
         var thisMonthTotal = thisMonthExpenses.Sum(e => e.Total);
         var prevMonthTotal = prevMonthExpenses.Sum(e => e.Total);
@@ -41,24 +66,19 @@ public class AiController : ControllerBase
             .GroupBy(e => string.IsNullOrWhiteSpace(e.Category) ? "Uncategorized" : e.Category)
             .Select(g => new { Category = g.Key, Total = g.Sum(x => x.Total) })
             .OrderByDescending(x => x.Total)
-            .FirstOrDefault();
+            .Select(x => x.Category)
+            .FirstOrDefault() ?? "N/A";
 
-        var allExpenses = await _db.Expenses.ToListAsync();
+        var allExpenses = await _db.Expenses.ToListAsync(cancellationToken);
         var anomalies = BuildAnomalies(allExpenses).Take(3).ToList();
 
-        var answer = BuildAnswer(question, thisMonthTotal, changePercent, topCategory?.Category, anomalies);
-
-        return Ok(new AiAskResponse
+        return new AiPromptContext
         {
-            Answer = answer,
-            Context = new AiContextDto
-            {
-                TotalExpense = Math.Round(thisMonthTotal, 2),
-                ChangePercent = Math.Round(changePercent, 2),
-                TopCategory = topCategory?.Category ?? "N/A",
-                Anomalies = anomalies
-            }
-        });
+            TotalExpense = thisMonthTotal,
+            ChangePercent = changePercent,
+            TopCategory = topCategory,
+            Anomalies = anomalies
+        };
     }
 
     private static List<AiAnomalyDto> BuildAnomalies(List<Expense> expenses)
@@ -88,16 +108,16 @@ public class AiController : ControllerBase
             .ToList();
     }
 
-    private static string BuildAnswer(
+    /*
+    private static string BuildAnswerMock(
         string question,
         double thisMonthTotal,
         double changePercent,
-        string? topCategory,
+        string topCategory,
         List<AiAnomalyDto> anomalies)
     {
         var q = question.ToLowerInvariant();
         var topAnomaly = anomalies.FirstOrDefault();
-        var category = string.IsNullOrWhiteSpace(topCategory) ? "N/A" : topCategory;
 
         if (q.Contains("increase") || q.Contains("rise") || q.Contains("up"))
         {
@@ -110,7 +130,7 @@ public class AiController : ControllerBase
 
             return "This month total spending is " + thisMonthTotal.ToString("0.00") +
                    " and change vs last month is " + SignedPercent(changePercent) +
-                   ". The largest category this month is " + category + ".";
+                   ". The largest category this month is " + topCategory + ".";
         }
 
         if (q.Contains("biggest") || q.Contains("issue") || q.Contains("risk"))
@@ -123,20 +143,20 @@ public class AiController : ControllerBase
                        ", z-score " + topAnomaly.ZScore.ToString("0.00") + ").";
             }
 
-            return "No strong anomalies were detected. Focus on your top category " + category +
+            return "No strong anomalies were detected. Focus on your top category " + topCategory +
                    " and monitor weekly changes.";
         }
 
         if (q.Contains("reduce") || q.Contains("save") || q.Contains("cost"))
         {
-            var first = topAnomaly?.Category ?? category;
+            var first = topAnomaly?.Category ?? topCategory;
             return "To reduce costs: 1) audit recent " + first +
                    " expenses, 2) set a monthly cap for top categories, 3) review any transaction above your normal average before approval.";
         }
 
         return "Summary: this month spending is " + thisMonthTotal.ToString("0.00") +
                " with change " + SignedPercent(changePercent) +
-               ". Top category is " + category +
+               ". Top category is " + topCategory +
                ". Ask about increase, biggest issue, or cost reduction for focused guidance.";
     }
 
@@ -145,6 +165,7 @@ public class AiController : ControllerBase
         if (value >= 0) return "+" + value.ToString("0.0") + "%";
         return value.ToString("0.0") + "%";
     }
+    */
 }
 
 public class AiAskRequest
