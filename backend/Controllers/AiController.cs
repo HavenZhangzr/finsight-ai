@@ -7,11 +7,15 @@ public class AiController : ControllerBase
 {
     private readonly AppDbContext _db;
     private readonly IAiAssistantService _aiAssistant;
+    private readonly IConfiguration _config;
+    private readonly IWebHostEnvironment _env;
 
-    public AiController(AppDbContext db, IAiAssistantService aiAssistant)
+    public AiController(AppDbContext db, IAiAssistantService aiAssistant, IConfiguration config, IWebHostEnvironment env)
     {
         _db = db;
         _aiAssistant = aiAssistant;
+        _config = config;
+        _env = env;
     }
 
     [HttpPost("ask")]
@@ -40,14 +44,32 @@ public class AiController : ControllerBase
             };
         }
 
-        var answer = await _aiAssistant.GenerateAnswerAsync(question, context, cancellationToken);
+        var configuredModel = _config["OpenAI:Model"] ?? "gpt-4o-mini";
+        var useMockFallback = _config.GetValue<bool?>("OpenAI:UseMockFallback") ?? true;
+        string answer;
+        string modelLabel;
+        string? fallbackReason = null;
 
-        // Legacy mock logic intentionally kept (commented) for quick fallback if needed.
-        // var answer = BuildAnswerMock(question, context.TotalExpense, context.ChangePercent, context.TopCategory, context.Anomalies);
+        try
+        {
+            answer = await _aiAssistant.GenerateAnswerAsync(question, context, cancellationToken);
+            modelLabel = configuredModel;
+        }
+        catch (Exception ex) when (useMockFallback)
+        {
+            answer = BuildAnswerMock(question, context.TotalExpense, context.ChangePercent, context.TopCategory, context.Anomalies);
+            modelLabel = "Mock AI";
+            if (_env.IsDevelopment())
+            {
+                fallbackReason = ex.Message;
+            }
+        }
 
         return Ok(new AiAskResponse
         {
             Answer = answer,
+            Model = modelLabel,
+            FallbackReason = fallbackReason,
             Context = new AiContextDto
             {
                 TotalExpense = Math.Round(context.TotalExpense, 2),
@@ -122,7 +144,6 @@ public class AiController : ControllerBase
             .ToList();
     }
 
-    /*
     private static string BuildAnswerMock(
         string question,
         double thisMonthTotal,
@@ -179,7 +200,6 @@ public class AiController : ControllerBase
         if (value >= 0) return "+" + value.ToString("0.0") + "%";
         return value.ToString("0.0") + "%";
     }
-    */
 }
 
 public class AiAskRequest
@@ -203,6 +223,8 @@ public class AiAskAlertContext
 public class AiAskResponse
 {
     public string Answer { get; set; } = "";
+    public string Model { get; set; } = "";
+    public string? FallbackReason { get; set; }
     public AiContextDto Context { get; set; } = new AiContextDto();
 }
 

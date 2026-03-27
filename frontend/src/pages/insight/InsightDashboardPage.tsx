@@ -59,6 +59,8 @@ type AiMessage = {
 
 type AiAskResponse = {
   answer: string;
+  model?: string;
+  fallbackReason?: string;
 };
 
 type MetricCardProps = {
@@ -226,6 +228,9 @@ export default function InsightDashboardPage() {
   const [asking, setAsking] = useState(false);
   const [activeAlert, setActiveAlert] = useState<AlertItem | null>(null);
   const [aiPanelOpen, setAiPanelOpen] = useState(false);
+  const [aiModelLabel, setAiModelLabel] = useState<string | null>(null);
+  const [aiFallbackReason, setAiFallbackReason] = useState<string | null>(null);
+  const [hasAskedAi, setHasAskedAi] = useState(false);
 
   useEffect(() => {
     let disposed = false;
@@ -282,6 +287,7 @@ export default function InsightDashboardPage() {
     }
 
     setAiPanelOpen(true);
+    setHasAskedAi(true);
     setMessages((prev) => [...prev, { role: 'user', text: q }]);
     setQuestion('');
     setAsking(true);
@@ -313,8 +319,12 @@ export default function InsightDashboardPage() {
       }
 
       const data = (await resp.json()) as AiAskResponse;
+      setAiModelLabel(data.model ?? 'Unknown');
+      setAiFallbackReason(data.fallbackReason ?? null);
       setMessages((prev) => [...prev, { role: 'assistant', text: data.answer }]);
     } catch {
+      setAiModelLabel('Unavailable');
+      setAiFallbackReason(null);
       setMessages((prev) => [
         ...prev,
         {
@@ -474,13 +484,28 @@ export default function InsightDashboardPage() {
                         <Box>
                           <Typography variant="h6" sx={{ fontWeight: 800, color: '#24364d' }}>AI Assistant</Typography>
                           {activeAlert ? (
-                            <Typography variant="caption" sx={{ color: '#4f5f80' }}>
-                              Context: {activeAlert.title}
-                            </Typography>
+                            <>
+                              <Typography variant="caption" sx={{ color: '#4f5f80', display: 'block' }}>
+                                Context: {activeAlert.title}
+                              </Typography>
+                              <Typography variant="caption" sx={{ color: '#4f5f80', display: 'block' }}>
+                                Model: {hasAskedAi ? (aiModelLabel ?? '--') : '--'}
+                              </Typography>
+                              {aiModelLabel === 'Mock AI' && aiFallbackReason ? (
+                                <Typography variant="caption" sx={{ color: '#b45309', display: 'block' }}>
+                                  Fallback: {aiFallbackReason}
+                                </Typography>
+                              ) : null}
+                            </>
                           ) : (
-                            <Typography variant="caption" sx={{ color: '#4f5f80' }}>
-                              Context: Dashboard summary
-                            </Typography>
+                            <>
+                              <Typography variant="caption" sx={{ color: '#4f5f80', display: 'block' }}>
+                                Context: Dashboard summary
+                              </Typography>
+                              <Typography variant="caption" sx={{ color: '#4f5f80', display: 'block' }}>
+                                Model: {hasAskedAi ? (aiModelLabel ?? '--') : '--'}
+                              </Typography>
+                            </>
                           )}
                         </Box>
                       </Stack>
@@ -576,6 +601,12 @@ export default function InsightDashboardPage() {
                     <Box>
                       <Typography variant="h6" sx={{ color: '#24364d', fontWeight: 800 }}>AI Assistant</Typography>
                       <Typography variant="body2" color="text.secondary">Ask questions and get action-focused insights.</Typography>
+                      {hasAskedAi ? (
+                        <Typography variant="caption" color="text.secondary">Model: {aiModelLabel ?? '--'}</Typography>
+                      ) : null}
+                      {aiModelLabel === 'Mock AI' && aiFallbackReason ? (
+                        <Typography variant="caption" sx={{ color: '#b45309', display: 'block' }}>Fallback: {aiFallbackReason}</Typography>
+                      ) : null}
                     </Box>
                   </Stack>
                   <Button variant="contained" size="small" onClick={() => setAiPanelOpen(true)}>

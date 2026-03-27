@@ -15,13 +15,17 @@ public class AiAssistantService : IAiAssistantService
 
     public async Task<string> GenerateAnswerAsync(string question, AiPromptContext context, CancellationToken cancellationToken = default)
     {
-        var apiKey = _config["OpenAI:ApiKey"] ?? Environment.GetEnvironmentVariable("OPENAI_API_KEY");
+        var configuredKey = _config["OpenAI:ApiKey"];
+        var apiKey = string.IsNullOrWhiteSpace(configuredKey)
+            ? Environment.GetEnvironmentVariable("OPENAI_API_KEY")
+            : configuredKey;
+        apiKey = apiKey?.Trim();
         if (string.IsNullOrWhiteSpace(apiKey))
         {
             throw new InvalidOperationException("OpenAI API key is missing. Set OpenAI:ApiKey or OPENAI_API_KEY.");
         }
 
-        var model = _config["OpenAI:Model"] ?? "gpt-4.1-mini";
+        var model = _config["OpenAI:Model"] ?? "gpt-4o-mini";
         var payload = new
         {
             model,
