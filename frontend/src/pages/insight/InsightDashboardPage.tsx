@@ -14,11 +14,14 @@ import {
   TextField,
   ToggleButton,
   ToggleButtonGroup,
+  Tooltip,
   Typography,
+  Slide,
 } from '@mui/material';
 import SendRoundedIcon from '@mui/icons-material/SendRounded';
 import SmartToyRoundedIcon from '@mui/icons-material/SmartToyRounded';
 import PersonRoundedIcon from '@mui/icons-material/PersonRounded';
+import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
 
 type Granularity = 'day' | 'week' | 'month';
 
@@ -151,12 +154,14 @@ function CategoryPie({ items }: { items: CategoryBreakdown[] }) {
   }
 
   let current = 0;
-  const segments = items.map((item, idx) => {
-    const start = current;
-    const end = current + item.percentage;
-    current = end;
-    return pieColors[idx % pieColors.length] + ' ' + start.toFixed(2) + '% ' + end.toFixed(2) + '%';
-  }).join(', ');
+  const segments = items
+    .map((item, idx) => {
+      const start = current;
+      const end = current + item.percentage;
+      current = end;
+      return pieColors[idx % pieColors.length] + ' ' + start.toFixed(2) + '% ' + end.toFixed(2) + '%';
+    })
+    .join(', ');
 
   return (
     <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '220px 1fr' }, gap: 2, alignItems: 'center' }}>
@@ -220,6 +225,7 @@ export default function InsightDashboardPage() {
   const [question, setQuestion] = useState('');
   const [asking, setAsking] = useState(false);
   const [activeAlert, setActiveAlert] = useState<AlertItem | null>(null);
+  const [aiPanelOpen, setAiPanelOpen] = useState(false);
 
   useEffect(() => {
     let disposed = false;
@@ -275,6 +281,7 @@ export default function InsightDashboardPage() {
       setActiveAlert(alertContext);
     }
 
+    setAiPanelOpen(true);
     setMessages((prev) => [...prev, { role: 'user', text: q }]);
     setQuestion('');
     setAsking(true);
@@ -342,7 +349,7 @@ export default function InsightDashboardPage() {
   }
 
   return (
-    <Stack spacing={2.2}>
+    <Stack spacing={2.2} sx={{ position: 'relative' }}>
       <Typography variant="h4" fontWeight={800} sx={{ color: '#24364d' }}>Insight Dashboard</Typography>
       <Typography variant="body1" color="text.secondary">
         Alert-first decision support: detect, prioritize, explain, and guide action.
@@ -361,7 +368,17 @@ export default function InsightDashboardPage() {
         <MetricCard title="Top Category" value={topCategory} />
       </Box>
 
-      <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', xl: '2fr 1fr' }, gap: 2 }}>
+      <Box
+        sx={{
+          display: 'grid',
+          gridTemplateColumns: {
+            xs: '1fr',
+            xl: 'minmax(0, 2fr) 390px',
+          },
+          gap: 2,
+          alignItems: 'start',
+        }}
+      >
         <Stack spacing={2}>
           <Card sx={{ border: '1px solid #dbe2ef', borderRadius: 2 }}>
             <CardContent>
@@ -396,42 +413,43 @@ export default function InsightDashboardPage() {
           </Card>
         </Stack>
 
-        <Stack spacing={2}>
+        <Stack spacing={2} sx={{ position: { xl: 'sticky' }, top: { xl: 16 } }}>
           <Card sx={{ border: '1px solid #dbe2ef', borderRadius: 2 }}>
             <CardContent>
-              <Typography variant="h5" fontWeight={700} sx={{ color: '#24364d', mb: 2 }}>
+              <Typography variant="h5" fontWeight={700} sx={{ color: '#24364d', mb: 1.4 }}>
                 Smart Alerts
               </Typography>
-              <Stack spacing={1.2}>
+
+              <Stack spacing={1} sx={{ maxHeight: 560, overflowY: 'auto', pr: 0.5 }}>
                 {alerts.map((a) => (
                   <Box
                     key={a.title + a.createdAt}
                     sx={{
                       border: '1px solid #e0e7f5',
                       borderRadius: 2,
-                      p: 1.3,
+                      p: 1.1,
                       bgcolor: '#fbfcff',
                     }}
                   >
-                    <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.7 }}>
+                    <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.6, flexWrap: 'wrap' }}>
                       <Chip label={a.severity.toUpperCase()} size="small" color={severityChipColor[a.severity] ?? 'default'} />
                       {(a.occurrences ?? 1) > 1 ? <Chip label={String(a.occurrences) + 'x'} size="small" variant="outlined" /> : null}
                       <Typography variant="subtitle1" fontWeight={700}>{a.title}</Typography>
                     </Stack>
 
-                    <Typography variant="body2" sx={{ mb: 0.5 }}>
+                    <Typography variant="body2" sx={{ mb: 0.45 }}>
                       <b>{formatCurrency(a.amount)}</b> (Avg: {formatCurrency(a.average)}) • {(a.deviation >= 0 ? '+' : '') + a.deviation.toFixed(1)}%
                     </Typography>
-                    <Typography variant="body2" sx={{ mb: 0.4 }}>
+                    <Typography variant="body2" sx={{ mb: 0.35 }}>
                       <b>Why:</b> {a.explanation}
                     </Typography>
-                    <Typography variant="body2" sx={{ mb: 0.8, color: '#2f6fed' }}>
+                    <Typography variant="body2" sx={{ mb: 0.7, color: '#2f6fed' }}>
                       <b>Action:</b> {a.suggestion}
                     </Typography>
 
                     <Button
                       size="small"
-                      variant="outlined"
+                      variant="contained"
                       onClick={() => askAi('Why is this expense unusually high?', a)}
                     >
                       Ask AI
@@ -443,97 +461,154 @@ export default function InsightDashboardPage() {
             </CardContent>
           </Card>
 
-          <Card sx={{ border: '1px solid #dbe2ef', borderRadius: 3, overflow: 'hidden' }}>
-            <Box sx={{ px: 2, py: 1.5, bgcolor: '#f7f9ff', borderBottom: '1px solid #e2e8f6' }}>
-              <Stack direction="row" alignItems="center" spacing={1}>
-                <Avatar sx={{ width: 32, height: 32, bgcolor: '#2f6fed' }}>
-                  <SmartToyRoundedIcon fontSize="small" />
-                </Avatar>
-                <Box>
-                  <Typography variant="h6" sx={{ fontWeight: 800, color: '#24364d' }}>AI Assistant</Typography>
-                  {activeAlert ? (
-                    <Typography variant="caption" sx={{ color: '#4f5f80' }}>
-                      Context: {activeAlert.title}
-                    </Typography>
-                  ) : null}
-                </Box>
-              </Stack>
-            </Box>
+          {aiPanelOpen ? (
+            <Slide direction="left" in={aiPanelOpen} mountOnEnter unmountOnExit>
+              <Box sx={{ minWidth: 0 }}>
+                <Card sx={{ border: '1px solid #dbe2ef', borderRadius: 3, overflow: 'hidden' }}>
+                  <Box sx={{ px: 2, py: 1.5, bgcolor: '#f7f9ff', borderBottom: '1px solid #e2e8f6' }}>
+                    <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
+                      <Stack direction="row" alignItems="center" spacing={1}>
+                        <Avatar sx={{ width: 32, height: 32, bgcolor: '#2f6fed' }}>
+                          <SmartToyRoundedIcon fontSize="small" />
+                        </Avatar>
+                        <Box>
+                          <Typography variant="h6" sx={{ fontWeight: 800, color: '#24364d' }}>AI Assistant</Typography>
+                          {activeAlert ? (
+                            <Typography variant="caption" sx={{ color: '#4f5f80' }}>
+                              Context: {activeAlert.title}
+                            </Typography>
+                          ) : (
+                            <Typography variant="caption" sx={{ color: '#4f5f80' }}>
+                              Context: Dashboard summary
+                            </Typography>
+                          )}
+                        </Box>
+                      </Stack>
 
-            <Box sx={{ p: 1.5, minHeight: 300, maxHeight: 360, overflowY: 'auto', bgcolor: '#ffffff' }}>
-              <Stack spacing={1.2}>
-                {messages.map((m, idx) => (
-                  <Stack key={String(idx)} direction="row" spacing={1} alignItems="flex-start" justifyContent={m.role === 'user' ? 'flex-end' : 'flex-start'}>
-                    {m.role === 'assistant' ? (
-                      <Avatar sx={{ width: 28, height: 28, bgcolor: '#2f6fed' }}>
-                        <SmartToyRoundedIcon sx={{ fontSize: 16 }} />
-                      </Avatar>
-                    ) : null}
+                      <IconButton size="small" onClick={() => setAiPanelOpen(false)}>
+                        <CloseRoundedIcon />
+                      </IconButton>
+                    </Stack>
+                  </Box>
 
-                    <Box
-                      sx={{
-                        px: 1.6,
-                        py: 1,
-                        borderRadius: 2,
-                        maxWidth: '85%',
-                        bgcolor: m.role === 'user' ? '#e8efff' : '#f4f5f9',
-                        border: m.role === 'user' ? '1px solid #d6e2ff' : '1px solid #e7e8ee',
-                      }}
-                    >
-                      <Typography variant="body1">{m.text}</Typography>
+                  <Box sx={{ p: 1.5, minHeight: 330, maxHeight: 420, overflowY: 'auto', bgcolor: '#ffffff' }}>
+                    <Stack spacing={1.2}>
+                      {messages.map((m, idx) => (
+                        <Stack key={String(idx)} direction="row" spacing={1} alignItems="flex-start" justifyContent={m.role === 'user' ? 'flex-end' : 'flex-start'}>
+                          {m.role === 'assistant' ? (
+                            <Avatar sx={{ width: 28, height: 28, bgcolor: '#2f6fed' }}>
+                              <SmartToyRoundedIcon sx={{ fontSize: 16 }} />
+                            </Avatar>
+                          ) : null}
+
+                          <Box
+                            sx={{
+                              px: 1.6,
+                              py: 1,
+                              borderRadius: 2,
+                              maxWidth: '85%',
+                              bgcolor: m.role === 'user' ? '#e8efff' : '#f4f5f9',
+                              border: m.role === 'user' ? '1px solid #d6e2ff' : '1px solid #e7e8ee',
+                            }}
+                          >
+                            <Typography variant="body1">{m.text}</Typography>
+                          </Box>
+
+                          {m.role === 'user' ? (
+                            <Avatar sx={{ width: 28, height: 28, bgcolor: '#8ab4f8' }}>
+                              <PersonRoundedIcon sx={{ fontSize: 16 }} />
+                            </Avatar>
+                          ) : null}
+                        </Stack>
+                      ))}
+                    </Stack>
+                  </Box>
+
+                  <Divider />
+                  <Box sx={{ px: 1.5, pt: 1, pb: 1.2, bgcolor: '#ffffff' }}>
+                    <Stack direction="row" spacing={1} sx={{ mb: 1, flexWrap: 'wrap' }}>
+                      {quickQuestions.map((q) => (
+                        <Button key={q} size="small" variant="outlined" onClick={() => askAi(q)} disabled={asking}>
+                          {q}
+                        </Button>
+                      ))}
+                    </Stack>
+
+                    <Stack direction="row" spacing={1} alignItems="center">
+                      <TextField
+                        fullWidth
+                        size="small"
+                        placeholder="Type your question..."
+                        value={question}
+                        onChange={(e) => setQuestion(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            askAi(question);
+                          }
+                        }}
+                      />
+                      <IconButton
+                        color="primary"
+                        onClick={() => askAi(question)}
+                        disabled={asking}
+                        sx={{
+                          bgcolor: '#2f6fed',
+                          color: '#fff',
+                          '&:hover': { bgcolor: '#285fd0' },
+                          '&.Mui-disabled': { bgcolor: '#b9c8f1', color: '#fff' },
+                        }}
+                      >
+                        <SendRoundedIcon />
+                      </IconButton>
+                    </Stack>
+                  </Box>
+                </Card>
+              </Box>
+            </Slide>
+          ) : (
+            <Card sx={{ border: '1px solid #dbe2ef', borderRadius: 2 }}>
+              <CardContent>
+                <Stack direction="row" spacing={1.2} alignItems="center" justifyContent="space-between">
+                  <Stack direction="row" spacing={1.2} alignItems="center">
+                    <Avatar sx={{ width: 32, height: 32, bgcolor: '#2f6fed' }}>
+                      <SmartToyRoundedIcon fontSize="small" />
+                    </Avatar>
+                    <Box>
+                      <Typography variant="h6" sx={{ color: '#24364d', fontWeight: 800 }}>AI Assistant</Typography>
+                      <Typography variant="body2" color="text.secondary">Ask questions and get action-focused insights.</Typography>
                     </Box>
-
-                    {m.role === 'user' ? (
-                      <Avatar sx={{ width: 28, height: 28, bgcolor: '#8ab4f8' }}>
-                        <PersonRoundedIcon sx={{ fontSize: 16 }} />
-                      </Avatar>
-                    ) : null}
                   </Stack>
-                ))}
-              </Stack>
-            </Box>
-
-            <Divider />
-            <Box sx={{ px: 1.5, pt: 1, pb: 1.2, bgcolor: '#ffffff' }}>
-              <Stack direction="row" spacing={1} sx={{ mb: 1, flexWrap: 'wrap' }}>
-                {quickQuestions.map((q) => (
-                  <Button key={q} size="small" variant="outlined" onClick={() => askAi(q)} disabled={asking}>
-                    {q}
+                  <Button variant="contained" size="small" onClick={() => setAiPanelOpen(true)}>
+                    Open
                   </Button>
-                ))}
-              </Stack>
-
-              <Stack direction="row" spacing={1} alignItems="center">
-                <TextField
-                  fullWidth
-                  size="small"
-                  placeholder="Type your question..."
-                  value={question}
-                  onChange={(e) => setQuestion(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      askAi(question);
-                    }
-                  }}
-                />
-                <IconButton
-                  color="primary"
-                  onClick={() => askAi(question)}
-                  disabled={asking}
-                  sx={{
-                    bgcolor: '#2f6fed',
-                    color: '#fff',
-                    '&:hover': { bgcolor: '#285fd0' },
-                    '&.Mui-disabled': { bgcolor: '#b9c8f1', color: '#fff' },
-                  }}
-                >
-                  <SendRoundedIcon />
-                </IconButton>
-              </Stack>
-            </Box>
-          </Card>
+                </Stack>
+              </CardContent>
+            </Card>
+          )}
         </Stack>
       </Box>
+
+      {!aiPanelOpen ? (
+        <Tooltip title="Ask AI">
+          <IconButton
+            onClick={() => setAiPanelOpen(true)}
+            sx={{
+              position: 'fixed',
+              right: 22,
+              bottom: 22,
+              bgcolor: '#2f6fed',
+              color: '#fff',
+              width: 56,
+              height: 56,
+              boxShadow: '0 8px 20px rgba(47,111,237,0.35)',
+              '&:hover': { bgcolor: '#285fd0' },
+              zIndex: 1200,
+            }}
+          >
+            <SmartToyRoundedIcon />
+          </IconButton>
+        </Tooltip>
+      ) : null}
     </Stack>
   );
 }
