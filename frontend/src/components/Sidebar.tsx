@@ -1,4 +1,3 @@
-// 左侧导航栏组件
 import React from 'react';
 import { Drawer, List, ListItem, ListItemIcon, ListItemText, Toolbar, Divider, ListItemButton } from '@mui/material';
 import ReceiptIcon from '@mui/icons-material/Receipt';
@@ -11,11 +10,11 @@ import { Link, useLocation } from 'react-router-dom';
 const drawerWidth = 220;
 
 const navItems = [
-  { text: "账单列表", icon: <ReceiptIcon />, path: "/bills" },
-  { text: "自动分类结果", icon: <ListAltIcon />, path: "/category" },
-  { text: "异常检测历史", icon: <HistoryIcon />, path: "/anomaly" },
-  { text: "新增账单录入", icon: <AddCircleOutlineIcon />, path: "/add" },
-  { text: "统计分析", icon: <InsertChartIcon />, path: "/stats" },
+  { text: '账单列表', icon: <ReceiptIcon />, path: '/bills' },
+  { text: '自动分类结果', icon: <ListAltIcon />, path: '/category' },
+  { text: '异常检测历史', icon: <HistoryIcon />, path: '/anomaly' },
+  { text: '新增账单录入', icon: <AddCircleOutlineIcon />, path: '/add' },
+  { text: 'Insight Dashboard', icon: <InsertChartIcon />, path: '/insights' },
 ];
 
 const Sidebar: React.FC = () => {

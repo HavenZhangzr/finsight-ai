@@ -12,7 +12,6 @@ import {
     Typography,
     Stack,
     Paper,
-    InputAdornment,
     Popover,
 } from "@mui/material";
 import { DatePicker } from "@mui/x-date-pickers/DatePicker";

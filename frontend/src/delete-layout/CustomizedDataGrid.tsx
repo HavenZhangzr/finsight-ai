@@ -1,4 +1,3 @@
-import * as React from 'react';
 import { DataGrid } from '@mui/x-data-grid';
 import type { GridColDef } from '@mui/x-data-grid';
 
@@ -7,7 +6,6 @@ const columns: GridColDef[] = [
   { field: 'name', headerName: '账单名称', width: 180 },
   { field: 'amount', headerName: '金额', width: 120 },
   { field: 'date', headerName: '日期', width: 140 },
-  // 可以继续扩展其他字段...
 ];
 
 const rows = [
@@ -23,12 +21,12 @@ export default function CustomizedDataGrid() {
         rows={rows}
         columns={columns}
         initialState={{
-            pagination: {
+          pagination: {
             paginationModel: { pageSize: 5, page: 0 },
-            },
+          },
         }}
         pageSizeOptions={[5]}
-        />
+      />
     </div>
   );
 }

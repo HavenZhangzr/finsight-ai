@@ -1,8 +1,8 @@
-import React from "react";
 import Layout from "./components/Layout";
 import { Routes, Route, Navigate } from "react-router-dom";
 import BillListPage from "./pages/bill/BillListPage";
 import ExpenseEditPage from "./pages/expenses/ExpenseEditPage";
+import InsightDashboardPage from "./pages/insight/InsightDashboardPage";
 import { LocalizationProvider } from "@mui/x-date-pickers";
 import { AdapterDayjs } from "@mui/x-date-pickers/AdapterDayjs";
 
@@ -19,7 +19,7 @@ function App() {
           } />
           <Route path="/bills" element={<BillListPage />} />
           <Route path="/add" element={<ExpenseEditPage />} />
-          {/* 后续可加其它 Route */}
+          <Route path="/insights" element={<InsightDashboardPage />} />
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </Layout>
@@ -28,16 +28,3 @@ function App() {
 }
 
 export default App;
-
-
-// import React from "react";
-// import Dashboard from "./pages/dashboard/Dashboard";
-// // 或 Layout+Routes 看你想要一级路由还是直接用 Dashboard
-
-// function App() {
-//   return (
-//     <Dashboard />
-//   );
-// }
-
-// export default App;

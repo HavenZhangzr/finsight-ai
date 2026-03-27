@@ -1,18 +1,16 @@
-import * as React from 'react';
 import { Box, Button, Stack, Typography, IconButton, Paper } from '@mui/material';
 import { DataGrid } from '@mui/x-data-grid';
 import type { GridColDef, GridRenderCellParams } from '@mui/x-data-grid';
 import AddIcon from '@mui/icons-material/Add';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
-// 模拟账单数据
+
 const rows = [
   { id: 1, name: '水费', amount: 156.5, date: '2025-01-05', status: '已支付' },
   { id: 2, name: '电费', amount: 230.2, date: '2025-01-10', status: '未支付' },
-  { id: 3, name: '物业', amount: 98.3,  date: '2025-01-11', status: '已支付' },
+  { id: 3, name: '物业', amount: 98.3, date: '2025-01-11', status: '已支付' },
 ];
 
-// 列定义
 const columns: GridColDef[] = [
   { field: 'id', headerName: '账单ID', width: 90 },
   { field: 'name', headerName: '账单名称', width: 180 },
@@ -37,12 +35,12 @@ const columns: GridColDef[] = [
   },
 ];
 
-// 这里放操作函数，可以替换为实际业务实现
 const handleEdit = (row: any) => {
-  alert(`编辑账单：${row.name}`);
+  alert('编辑账单：' + row.name);
 };
+
 const handleDelete = (row: any) => {
-  alert(`删除账单：${row.name}`);
+  alert('删除账单：' + row.name);
 };
 
 export default function BillListPage() {
@@ -64,7 +62,7 @@ export default function BillListPage() {
           autoHeight
           disableRowSelectionOnClick
           initialState={{
-            pagination: { paginationModel: { page: 0, pageSize: 5 } }
+            pagination: { paginationModel: { page: 0, pageSize: 5 } },
           }}
           pageSizeOptions={[5, 10, 20]}
         />
