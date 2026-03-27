@@ -25,7 +25,21 @@ public class AiController : ControllerBase
 
         var context = await BuildPromptContextAsync(cancellationToken);
 
-        // Module 3 v2: OpenAI-backed answer generation.
+        if (request.AlertContext != null)
+        {
+            context.AlertContext = new AiAlertContext
+            {
+                Title = request.AlertContext.Title ?? string.Empty,
+                Category = request.AlertContext.Category ?? string.Empty,
+                Amount = request.AlertContext.Amount,
+                Average = request.AlertContext.Average,
+                Deviation = request.AlertContext.Deviation,
+                Severity = request.AlertContext.Severity ?? string.Empty,
+                Explanation = request.AlertContext.Explanation ?? string.Empty,
+                Suggestion = request.AlertContext.Suggestion ?? string.Empty
+            };
+        }
+
         var answer = await _aiAssistant.GenerateAnswerAsync(question, context, cancellationToken);
 
         // Legacy mock logic intentionally kept (commented) for quick fallback if needed.
@@ -171,6 +185,19 @@ public class AiController : ControllerBase
 public class AiAskRequest
 {
     public string Question { get; set; } = "";
+    public AiAskAlertContext? AlertContext { get; set; }
+}
+
+public class AiAskAlertContext
+{
+    public string? Title { get; set; }
+    public string? Category { get; set; }
+    public double Amount { get; set; }
+    public double Average { get; set; }
+    public double Deviation { get; set; }
+    public string? Severity { get; set; }
+    public string? Explanation { get; set; }
+    public string? Suggestion { get; set; }
 }
 
 public class AiAskResponse

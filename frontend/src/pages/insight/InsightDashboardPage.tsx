@@ -35,20 +35,18 @@ type CategoryBreakdown = {
   percentage: number;
 };
 
-type AnomalyExplanation = {
-  expenseId: number;
-  date: string;
-  payee: string;
+type AlertItem = {
+  title: string;
   category: string;
-  total: number;
-  averageAmount: number;
-  deviationPercent: number;
-  zScore: number;
-  severity: 'Low' | 'Medium' | 'High' | string;
-  method: string;
-  riskLevel: string;
+  amount: number;
+  average: number;
+  deviation: number;
+  severity: 'High' | 'Medium' | 'Low' | string;
   explanation: string;
-  recommendation: string;
+  suggestion: string;
+  createdAt: string;
+  zScore: number;
+  occurrences?: number;
 };
 
 type AiMessage = {
@@ -209,18 +207,19 @@ export default function InsightDashboardPage() {
   const [granularity, setGranularity] = useState<Granularity>('month');
   const [trends, setTrends] = useState<TrendPoint[]>([]);
   const [breakdown, setBreakdown] = useState<CategoryBreakdown[]>([]);
-  const [anomalies, setAnomalies] = useState<AnomalyExplanation[]>([]);
+  const [alerts, setAlerts] = useState<AlertItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [messages, setMessages] = useState<AiMessage[]>([
     {
       role: 'assistant',
-      text: 'I can explain expense changes and suggest actions based on your dashboard data. Try a quick question below.',
+      text: 'I can explain alerts and recommend actions based on your expense data. Select an alert or ask a question.',
     },
   ]);
   const [question, setQuestion] = useState('');
   const [asking, setAsking] = useState(false);
+  const [activeAlert, setActiveAlert] = useState<AlertItem | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -232,25 +231,25 @@ export default function InsightDashboardPage() {
         const periods = periodsByGranularity[granularity];
         const trendUrl = '/api/Insight/trends?granularity=' + granularity + '&periods=' + periods;
 
-        const [trendResp, categoryResp, anomalyResp] = await Promise.all([
+        const [trendResp, categoryResp, alertsResp] = await Promise.all([
           fetch(trendUrl),
           fetch('/api/Insight/category-breakdown?top=5'),
-          fetch('/api/Insight/anomaly-explanations?top=4'),
+          fetch('/api/Alerts?includeLow=false&top=6'),
         ]);
 
-        if (trendResp.ok === false || categoryResp.ok === false || anomalyResp.ok === false) {
+        if (trendResp.ok === false || categoryResp.ok === false || alertsResp.ok === false) {
           throw new Error('Failed to load dashboard data.');
         }
 
         const trendData = (await trendResp.json()) as TrendPoint[];
         const categoryData = (await categoryResp.json()) as CategoryBreakdown[];
-        const anomalyData = (await anomalyResp.json()) as AnomalyExplanation[];
+        const alertData = (await alertsResp.json()) as AlertItem[];
 
         if (disposed) return;
 
         setTrends(trendData);
         setBreakdown(categoryData);
-        setAnomalies(anomalyData);
+        setAlerts(alertData);
       } catch {
         if (disposed === false) {
           setError('Unable to load insight dashboard data right now.');
@@ -268,19 +267,38 @@ export default function InsightDashboardPage() {
     };
   }, [granularity]);
 
-  async function askAi(rawQuestion: string) {
+  async function askAi(rawQuestion: string, alertContext?: AlertItem | null) {
     const q = rawQuestion.trim();
     if (q.length === 0 || asking) return;
+
+    if (alertContext) {
+      setActiveAlert(alertContext);
+    }
 
     setMessages((prev) => [...prev, { role: 'user', text: q }]);
     setQuestion('');
     setAsking(true);
 
     try {
+      const payload: any = { question: q };
+      const context = alertContext ?? activeAlert;
+      if (context) {
+        payload.alertContext = {
+          title: context.title,
+          category: context.category,
+          amount: context.amount,
+          average: context.average,
+          deviation: context.deviation,
+          severity: context.severity,
+          explanation: context.explanation,
+          suggestion: context.suggestion,
+        };
+      }
+
       const resp = await fetch('/api/Ai/ask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: q }),
+        body: JSON.stringify(payload),
       });
 
       if (resp.ok === false) {
@@ -304,7 +322,7 @@ export default function InsightDashboardPage() {
 
   const totalExpense = useMemo(() => trends.reduce((s, x) => s + x.total, 0), [trends]);
 
-  const monthlyChange = useMemo(() => {
+  const periodChange = useMemo(() => {
     if (trends.length < 2) return 0;
     const last = trends[trends.length - 1].total;
     const prev = trends[trends.length - 2].total;
@@ -327,7 +345,7 @@ export default function InsightDashboardPage() {
     <Stack spacing={2.2}>
       <Typography variant="h4" fontWeight={800} sx={{ color: '#24364d' }}>Insight Dashboard</Typography>
       <Typography variant="body1" color="text.secondary">
-        Expense trends, category mix, anomaly explanations, and AI assistant guidance.
+        Alert-first decision support: detect, prioritize, explain, and guide action.
       </Typography>
 
       {error ? <Alert severity="error">{error}</Alert> : null}
@@ -336,10 +354,10 @@ export default function InsightDashboardPage() {
         <MetricCard title="Total Expense" value={formatCurrency(totalExpense)} />
         <MetricCard
           title="Period Change"
-          value={(monthlyChange >= 0 ? '+' : '') + monthlyChange.toFixed(1) + '%'}
-          tone={monthlyChange >= 0 ? 'positive' : 'warning'}
+          value={(periodChange >= 0 ? '+' : '') + periodChange.toFixed(1) + '%'}
+          tone={periodChange >= 0 ? 'positive' : 'warning'}
         />
-        <MetricCard title="Alerts" value={String(anomalies.length) + ' anomalies'} tone={anomalies.length > 0 ? 'warning' : 'neutral'} />
+        <MetricCard title="Alerts" value={String(alerts.length) + ' active'} tone={alerts.length > 0 ? 'warning' : 'neutral'} />
         <MetricCard title="Top Category" value={topCategory} />
       </Box>
 
@@ -382,35 +400,45 @@ export default function InsightDashboardPage() {
           <Card sx={{ border: '1px solid #dbe2ef', borderRadius: 2 }}>
             <CardContent>
               <Typography variant="h5" fontWeight={700} sx={{ color: '#24364d', mb: 2 }}>
-                Anomaly Alerts
+                Smart Alerts
               </Typography>
-              <Stack spacing={1.4}>
-                {anomalies.map((a) => (
+              <Stack spacing={1.2}>
+                {alerts.map((a) => (
                   <Box
-                    key={a.expenseId}
+                    key={a.title + a.createdAt}
                     sx={{
                       border: '1px solid #e0e7f5',
                       borderRadius: 2,
-                      p: 1.5,
+                      p: 1.3,
                       bgcolor: '#fbfcff',
                     }}
                   >
-                    <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.8 }}>
-                      <Chip label={a.severity.toUpperCase()} color={severityChipColor[a.severity] ?? 'default'} size="small" />
-                      <Typography variant="subtitle1" fontWeight={700}>{a.payee}</Typography>
+                    <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.7 }}>
+                      <Chip label={a.severity.toUpperCase()} size="small" color={severityChipColor[a.severity] ?? 'default'} />
+                      {(a.occurrences ?? 1) > 1 ? <Chip label={String(a.occurrences) + 'x'} size="small" variant="outlined" /> : null}
+                      <Typography variant="subtitle1" fontWeight={700}>{a.title}</Typography>
                     </Stack>
-                    <Typography variant="body2" sx={{ mb: 0.4 }}>
-                      Spent: <b>{a.total.toFixed(2)}</b> (Avg: {a.averageAmount.toFixed(2)})
+
+                    <Typography variant="body2" sx={{ mb: 0.5 }}>
+                      <b>{formatCurrency(a.amount)}</b> (Avg: {formatCurrency(a.average)}) • {(a.deviation >= 0 ? '+' : '') + a.deviation.toFixed(1)}%
                     </Typography>
                     <Typography variant="body2" sx={{ mb: 0.4 }}>
-                      Deviation: <b>{(a.deviationPercent >= 0 ? '+' : '') + a.deviationPercent.toFixed(1)}%</b>
+                      <b>Why:</b> {a.explanation}
                     </Typography>
-                    <Typography variant="body2" sx={{ color: '#2f6fed', fontStyle: 'italic' }}>
-                      {a.recommendation}
+                    <Typography variant="body2" sx={{ mb: 0.8, color: '#2f6fed' }}>
+                      <b>Action:</b> {a.suggestion}
                     </Typography>
+
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      onClick={() => askAi('Why is this expense unusually high?', a)}
+                    >
+                      Ask AI
+                    </Button>
                   </Box>
                 ))}
-                {anomalies.length === 0 ? <Typography color="text.secondary">No anomaly alerts.</Typography> : null}
+                {alerts.length === 0 ? <Typography color="text.secondary">No high/medium alerts.</Typography> : null}
               </Stack>
             </CardContent>
           </Card>
@@ -421,7 +449,14 @@ export default function InsightDashboardPage() {
                 <Avatar sx={{ width: 32, height: 32, bgcolor: '#2f6fed' }}>
                   <SmartToyRoundedIcon fontSize="small" />
                 </Avatar>
-                <Typography variant="h5" sx={{ fontWeight: 800, color: '#24364d' }}>AI Assistant</Typography>
+                <Box>
+                  <Typography variant="h6" sx={{ fontWeight: 800, color: '#24364d' }}>AI Assistant</Typography>
+                  {activeAlert ? (
+                    <Typography variant="caption" sx={{ color: '#4f5f80' }}>
+                      Context: {activeAlert.title}
+                    </Typography>
+                  ) : null}
+                </Box>
               </Stack>
             </Box>
 

@@ -101,6 +101,27 @@ public class AiAssistantService : IAiAssistantService
         }
 
         sb.AppendLine();
+
+        if (context.AlertContext != null)
+        {
+            sb.AppendLine("Focused Alert Context:");
+            sb.AppendLine("- Title: " + context.AlertContext.Title);
+            sb.AppendLine("- Category: " + context.AlertContext.Category);
+            sb.AppendLine("- Amount: $" + context.AlertContext.Amount.ToString("0.00"));
+            sb.AppendLine("- Average: $" + context.AlertContext.Average.ToString("0.00"));
+            sb.AppendLine("- Deviation: " + SignedPercent(context.AlertContext.Deviation));
+            sb.AppendLine("- Severity: " + context.AlertContext.Severity);
+            if (string.IsNullOrWhiteSpace(context.AlertContext.Explanation) == false)
+            {
+                sb.AppendLine("- Explanation: " + context.AlertContext.Explanation);
+            }
+            if (string.IsNullOrWhiteSpace(context.AlertContext.Suggestion) == false)
+            {
+                sb.AppendLine("- Suggestion: " + context.AlertContext.Suggestion);
+            }
+            sb.AppendLine();
+        }
+
         sb.AppendLine("User Question:");
         sb.AppendLine(question);
         sb.AppendLine();
