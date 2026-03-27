@@ -68,12 +68,10 @@ public class AiAssistantService : IAiAssistantService
     {
         var nl = Environment.NewLine;
         return
-            "You are a financial assistant helping small business owners understand their expenses." + nl +
-            "Your job is to:" + nl +
-            "- Analyze financial data" + nl +
-            "- Explain anomalies clearly" + nl +
-            "- Provide practical and actionable suggestions" + nl +
-            "Avoid generic answers. Be specific and concise.";
+            "You are an AI financial assistant for a business expense management product." + nl +
+            "Your job is to analyze expense patterns and anomalies, then give clear, actionable guidance." + nl +
+            "Write like a product assistant, not an academic report." + nl +
+            "Keep answers concise, practical, and easy to scan.";
     }
 
     private static string BuildUserPrompt(string question, AiPromptContext context)
@@ -137,40 +135,33 @@ public class AiAssistantService : IAiAssistantService
     private static string BuildOutputInstruction(string question)
     {
         var nl = Environment.NewLine;
-        var q = question.ToLowerInvariant();
-
-        if (q.Contains("why") || q.Contains("increase") || q.Contains("rise"))
-        {
-            return "Answer in 3 parts:" + nl +
-                   "1. Main Reason: explain the primary cause." + nl +
-                   "2. Supporting Details: reference anomaly data." + nl +
-                   "3. Suggested Action: provide 1-2 practical actions." + nl +
-                   "Keep the answer under 120 words.";
-        }
-
-        if (q.Contains("biggest") || q.Contains("issue") || q.Contains("risk"))
-        {
-            return "Answer in 3 parts:" + nl +
-                   "1. Biggest Issue: identify the most critical anomaly." + nl +
-                   "2. Why It Matters: explain business impact briefly." + nl +
-                   "3. Next Action: provide one concrete action." + nl +
-                   "Keep the answer under 120 words.";
-        }
-
-        if (q.Contains("how") || q.Contains("reduce") || q.Contains("save") || q.Contains("cost"))
-        {
-            return "Answer in 3 parts:" + nl +
-                   "1. Cost Drivers: identify top drivers." + nl +
-                   "2. Reduction Plan: provide 2-3 concrete ways to reduce cost." + nl +
-                   "3. Priority: suggest what to do first this week." + nl +
-                   "Keep the answer under 140 words.";
-        }
-
-        return "Answer in 3 parts:" + nl +
-               "1. Key Insight" + nl +
-               "2. Supporting Data" + nl +
-               "3. Suggested Action" + nl +
-               "Keep the answer under 120 words.";
+        return
+            "Instructions:" + nl +
+            "- Be concise and practical." + nl +
+            "- Use simple business language." + nl +
+            "- Highlight key numbers (amounts and percentages)." + nl +
+            "- Do NOT write long paragraphs." + nl +
+            "- Each bullet MUST be on a separate line." + nl +
+            "- DO NOT put multiple bullets in one sentence." + nl +
+            "- Use clean line breaks." + nl +
+            "" + nl +
+            "Output EXACTLY in this format:" + nl +
+            "⚠️ Summary:" + nl +
+            "Short one-line explanation" + nl +
+            "" + nl +
+            "• Key insight 1" + nl +
+            "• Key insight 2" + nl +
+            "" + nl +
+            "💡 Suggested actions:" + nl +
+            "• Action 1" + nl +
+            "• Action 2" + nl +
+            "" + nl +
+            "Bad example (DO NOT do this):" + nl +
+            "• A • B • C in one paragraph" + nl +
+            "Good example:" + nl +
+            "• A" + nl +
+            "• B" + nl +
+            "• C";
     }
 
     private static string SignedPercent(double value)

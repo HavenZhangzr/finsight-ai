@@ -536,7 +536,7 @@ export default function InsightDashboardPage() {
                               border: m.role === 'user' ? '1px solid #d6e2ff' : '1px solid #e7e8ee',
                             }}
                           >
-                            <Typography variant="body1">{m.text}</Typography>
+                            <Typography variant="body1" sx={{ whiteSpace: "pre-line" }}>{m.text}</Typography>
                           </Box>
 
                           {m.role === 'user' ? (
