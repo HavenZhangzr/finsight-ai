@@ -1,0 +1,6 @@
+@QB_SortifyDetectAI_HostAddress = http://localhost:5167
+
+GET {{QB_SortifyDetectAI_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
