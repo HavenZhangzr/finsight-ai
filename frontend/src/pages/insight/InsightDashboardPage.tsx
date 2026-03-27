@@ -1,16 +1,24 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   Alert,
+  Avatar,
   Box,
+  Button,
   Card,
   CardContent,
   Chip,
   CircularProgress,
+  Divider,
+  IconButton,
   Stack,
+  TextField,
   ToggleButton,
   ToggleButtonGroup,
   Typography,
 } from '@mui/material';
+import SendRoundedIcon from '@mui/icons-material/SendRounded';
+import SmartToyRoundedIcon from '@mui/icons-material/SmartToyRounded';
+import PersonRoundedIcon from '@mui/icons-material/PersonRounded';
 
 type Granularity = 'day' | 'week' | 'month';
 
@@ -41,6 +49,15 @@ type AnomalyExplanation = {
   riskLevel: string;
   explanation: string;
   recommendation: string;
+};
+
+type AiMessage = {
+  role: 'user' | 'assistant';
+  text: string;
+};
+
+type AiAskResponse = {
+  answer: string;
 };
 
 type MetricCardProps = {
@@ -88,7 +105,7 @@ function TrendLineChart({ points }: { points: TrendPoint[] }) {
   const coords = points.map((p, i) => {
     const x = left + (chartW * i) / Math.max(points.length - 1, 1);
     const y = top + chartH - (p.total / max) * chartH;
-    return { x, y, label: p.period, value: p.total, hot: p.total > avg * 1.2 };
+    return { x, y, label: p.period, hot: p.total > avg * 1.2 };
   });
 
   const line = coords.map((c) => c.x + ',' + c.y).join(' ');
@@ -182,6 +199,12 @@ const periodsByGranularity: Record<Granularity, number> = {
   month: 6,
 };
 
+const quickQuestions = [
+  'Why did expenses increase?',
+  'What is the biggest issue this month?',
+  'How can I reduce costs?',
+];
+
 export default function InsightDashboardPage() {
   const [granularity, setGranularity] = useState<Granularity>('month');
   const [trends, setTrends] = useState<TrendPoint[]>([]);
@@ -189,6 +212,15 @@ export default function InsightDashboardPage() {
   const [anomalies, setAnomalies] = useState<AnomalyExplanation[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const [messages, setMessages] = useState<AiMessage[]>([
+    {
+      role: 'assistant',
+      text: 'I can explain expense changes and suggest actions based on your dashboard data. Try a quick question below.',
+    },
+  ]);
+  const [question, setQuestion] = useState('');
+  const [asking, setAsking] = useState(false);
 
   useEffect(() => {
     let disposed = false;
@@ -236,6 +268,40 @@ export default function InsightDashboardPage() {
     };
   }, [granularity]);
 
+  async function askAi(rawQuestion: string) {
+    const q = rawQuestion.trim();
+    if (q.length === 0 || asking) return;
+
+    setMessages((prev) => [...prev, { role: 'user', text: q }]);
+    setQuestion('');
+    setAsking(true);
+
+    try {
+      const resp = await fetch('/api/Ai/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: q }),
+      });
+
+      if (resp.ok === false) {
+        throw new Error('AI request failed');
+      }
+
+      const data = (await resp.json()) as AiAskResponse;
+      setMessages((prev) => [...prev, { role: 'assistant', text: data.answer }]);
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          text: 'I could not process that question right now. Please try again.',
+        },
+      ]);
+    } finally {
+      setAsking(false);
+    }
+  }
+
   const totalExpense = useMemo(() => trends.reduce((s, x) => s + x.total, 0), [trends]);
 
   const monthlyChange = useMemo(() => {
@@ -261,7 +327,7 @@ export default function InsightDashboardPage() {
     <Stack spacing={2.2}>
       <Typography variant="h4" fontWeight={800} sx={{ color: '#24364d' }}>Insight Dashboard</Typography>
       <Typography variant="body1" color="text.secondary">
-        Expense trends, category mix, and anomaly explanations.
+        Expense trends, category mix, anomaly explanations, and AI assistant guidance.
       </Typography>
 
       {error ? <Alert severity="error">{error}</Alert> : null}
@@ -312,45 +378,126 @@ export default function InsightDashboardPage() {
           </Card>
         </Stack>
 
-        <Card sx={{ border: '1px solid #dbe2ef', borderRadius: 2, height: 'fit-content' }}>
-          <CardContent>
-            <Typography variant="h5" fontWeight={700} sx={{ color: '#24364d', mb: 2 }}>
-              Anomaly Alerts
-            </Typography>
-            <Stack spacing={1.4}>
-              {anomalies.map((a) => (
-                <Box
-                  key={a.expenseId}
+        <Stack spacing={2}>
+          <Card sx={{ border: '1px solid #dbe2ef', borderRadius: 2 }}>
+            <CardContent>
+              <Typography variant="h5" fontWeight={700} sx={{ color: '#24364d', mb: 2 }}>
+                Anomaly Alerts
+              </Typography>
+              <Stack spacing={1.4}>
+                {anomalies.map((a) => (
+                  <Box
+                    key={a.expenseId}
+                    sx={{
+                      border: '1px solid #e0e7f5',
+                      borderRadius: 2,
+                      p: 1.5,
+                      bgcolor: '#fbfcff',
+                    }}
+                  >
+                    <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.8 }}>
+                      <Chip label={a.severity.toUpperCase()} color={severityChipColor[a.severity] ?? 'default'} size="small" />
+                      <Typography variant="subtitle1" fontWeight={700}>{a.payee}</Typography>
+                    </Stack>
+                    <Typography variant="body2" sx={{ mb: 0.4 }}>
+                      Spent: <b>{a.total.toFixed(2)}</b> (Avg: {a.averageAmount.toFixed(2)})
+                    </Typography>
+                    <Typography variant="body2" sx={{ mb: 0.4 }}>
+                      Deviation: <b>{(a.deviationPercent >= 0 ? '+' : '') + a.deviationPercent.toFixed(1)}%</b>
+                    </Typography>
+                    <Typography variant="body2" sx={{ color: '#2f6fed', fontStyle: 'italic' }}>
+                      {a.recommendation}
+                    </Typography>
+                  </Box>
+                ))}
+                {anomalies.length === 0 ? <Typography color="text.secondary">No anomaly alerts.</Typography> : null}
+              </Stack>
+            </CardContent>
+          </Card>
+
+          <Card sx={{ border: '1px solid #dbe2ef', borderRadius: 3, overflow: 'hidden' }}>
+            <Box sx={{ px: 2, py: 1.5, bgcolor: '#f7f9ff', borderBottom: '1px solid #e2e8f6' }}>
+              <Stack direction="row" alignItems="center" spacing={1}>
+                <Avatar sx={{ width: 32, height: 32, bgcolor: '#2f6fed' }}>
+                  <SmartToyRoundedIcon fontSize="small" />
+                </Avatar>
+                <Typography variant="h5" sx={{ fontWeight: 800, color: '#24364d' }}>AI Assistant</Typography>
+              </Stack>
+            </Box>
+
+            <Box sx={{ p: 1.5, minHeight: 300, maxHeight: 360, overflowY: 'auto', bgcolor: '#ffffff' }}>
+              <Stack spacing={1.2}>
+                {messages.map((m, idx) => (
+                  <Stack key={String(idx)} direction="row" spacing={1} alignItems="flex-start" justifyContent={m.role === 'user' ? 'flex-end' : 'flex-start'}>
+                    {m.role === 'assistant' ? (
+                      <Avatar sx={{ width: 28, height: 28, bgcolor: '#2f6fed' }}>
+                        <SmartToyRoundedIcon sx={{ fontSize: 16 }} />
+                      </Avatar>
+                    ) : null}
+
+                    <Box
+                      sx={{
+                        px: 1.6,
+                        py: 1,
+                        borderRadius: 2,
+                        maxWidth: '85%',
+                        bgcolor: m.role === 'user' ? '#e8efff' : '#f4f5f9',
+                        border: m.role === 'user' ? '1px solid #d6e2ff' : '1px solid #e7e8ee',
+                      }}
+                    >
+                      <Typography variant="body1">{m.text}</Typography>
+                    </Box>
+
+                    {m.role === 'user' ? (
+                      <Avatar sx={{ width: 28, height: 28, bgcolor: '#8ab4f8' }}>
+                        <PersonRoundedIcon sx={{ fontSize: 16 }} />
+                      </Avatar>
+                    ) : null}
+                  </Stack>
+                ))}
+              </Stack>
+            </Box>
+
+            <Divider />
+            <Box sx={{ px: 1.5, pt: 1, pb: 1.2, bgcolor: '#ffffff' }}>
+              <Stack direction="row" spacing={1} sx={{ mb: 1, flexWrap: 'wrap' }}>
+                {quickQuestions.map((q) => (
+                  <Button key={q} size="small" variant="outlined" onClick={() => askAi(q)} disabled={asking}>
+                    {q}
+                  </Button>
+                ))}
+              </Stack>
+
+              <Stack direction="row" spacing={1} alignItems="center">
+                <TextField
+                  fullWidth
+                  size="small"
+                  placeholder="Type your question..."
+                  value={question}
+                  onChange={(e) => setQuestion(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      askAi(question);
+                    }
+                  }}
+                />
+                <IconButton
+                  color="primary"
+                  onClick={() => askAi(question)}
+                  disabled={asking}
                   sx={{
-                    border: '1px solid #e0e7f5',
-                    borderRadius: 2,
-                    p: 1.5,
-                    bgcolor: '#fbfcff',
+                    bgcolor: '#2f6fed',
+                    color: '#fff',
+                    '&:hover': { bgcolor: '#285fd0' },
+                    '&.Mui-disabled': { bgcolor: '#b9c8f1', color: '#fff' },
                   }}
                 >
-                  <Stack direction="row" spacing={1} alignItems="center" sx={{ mb: 0.8 }}>
-                    <Chip label={a.severity.toUpperCase()} color={severityChipColor[a.severity] ?? 'default'} size="small" />
-                    <Typography variant="subtitle1" fontWeight={700}>{a.payee}</Typography>
-                  </Stack>
-
-                  <Typography variant="body2" sx={{ mb: 0.4 }}>
-                    Spent: <b>{a.total.toFixed(2)}</b> (Avg: {a.averageAmount.toFixed(2)})
-                  </Typography>
-                  <Typography variant="body2" sx={{ mb: 0.4 }}>
-                    Deviation: <b>{(a.deviationPercent >= 0 ? '+' : '') + a.deviationPercent.toFixed(1)}%</b>
-                  </Typography>
-                  <Typography variant="body2" sx={{ mb: 0.8 }}>
-                    {a.explanation}
-                  </Typography>
-                  <Typography variant="body2" sx={{ color: '#2f6fed', fontStyle: 'italic' }}>
-                    {a.recommendation}
-                  </Typography>
-                </Box>
-              ))}
-              {anomalies.length === 0 ? <Typography color="text.secondary">No anomaly alerts.</Typography> : null}
-            </Stack>
-          </CardContent>
-        </Card>
+                  <SendRoundedIcon />
+                </IconButton>
+              </Stack>
+            </Box>
+          </Card>
+        </Stack>
       </Box>
     </Stack>
   );
