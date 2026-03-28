@@ -7,8 +7,10 @@ builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddControllers();
 
+var dbPath = Path.Combine(builder.Environment.ContentRootPath, "quickbooks.db");
+
 builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlite("Data Source=quickbooks.db"));
+    options.UseSqlite($"Data Source={dbPath}"));
 
 builder.Services.AddExpenseServices();
 builder.Services.AddHttpClient<IAiAssistantService, AiAssistantService>();

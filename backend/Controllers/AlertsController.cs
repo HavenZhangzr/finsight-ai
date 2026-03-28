@@ -6,17 +6,23 @@ using Microsoft.EntityFrameworkCore;
 public class AlertsController : ControllerBase
 {
     private readonly AppDbContext _db;
+    private readonly IExpenseAnomalyDetectionService _anomalyService;
 
-    public AlertsController(AppDbContext db)
+    public AlertsController(AppDbContext db, IExpenseAnomalyDetectionService anomalyService)
     {
         _db = db;
+        _anomalyService = anomalyService;
     }
 
     [HttpGet]
-    public async Task<ActionResult<IEnumerable<AlertDto>>> GetAlerts([FromQuery] bool includeLow = false, [FromQuery] int top = 20)
+    public async Task<ActionResult<IEnumerable<AlertDto>>> GetAlerts(
+        [FromQuery] bool includeLow = false,
+        [FromQuery] int top = 20,
+        [FromQuery] double threshold = 3.0)
     {
         if (top <= 0) top = 20;
         if (top > 100) top = 100;
+        if (threshold <= 0) threshold = 3.0;
 
         var expenses = await _db.Expenses.OrderByDescending(e => e.Date).ToListAsync();
         if (expenses.Count == 0)
@@ -24,36 +30,74 @@ public class AlertsController : ControllerBase
             return Ok(Array.Empty<AlertDto>());
         }
 
-        var mean = expenses.Average(e => e.Total);
-        var variance = expenses.Sum(e => Math.Pow(e.Total - mean, 2)) / expenses.Count;
-        var stdDev = Math.Sqrt(variance);
-        if (stdDev == 0)
+        var allData = expenses.Select(MapExpenseToData).ToList();
+        var anomalyCandidates = await _anomalyService.GetAmountOutliersAsync(allData, threshold);
+        if (anomalyCandidates.Count == 0)
         {
             return Ok(Array.Empty<AlertDto>());
         }
 
-        var rawAlerts = expenses
-            .Select(e =>
-            {
-                var zScore = Math.Abs((e.Total - mean) / stdDev);
-                var deviation = mean == 0 ? 0 : ((e.Total - mean) / mean) * 100;
-                var severity = CalculateSeverity(zScore, deviation);
-                return new AlertDto
-                {
-                    Title = (string.IsNullOrWhiteSpace(e.Category) ? "Uncategorized" : e.Category) + " Expense Spike",
-                    Category = string.IsNullOrWhiteSpace(e.Category) ? "Uncategorized" : e.Category,
-                    Amount = Math.Round(e.Total, 2),
-                    Average = Math.Round(mean, 2),
-                    Deviation = Math.Round(deviation, 2),
-                    Severity = severity,
-                    Explanation = GenerateExplanation(e.Category, e.Total, mean, deviation, severity),
-                    Suggestion = GenerateSuggestion(e.Category, severity),
-                    CreatedAt = e.Date,
-                    ZScore = Math.Round(zScore, 2),
-                    Occurrences = 1
-                };
-            })
+        var candidateKeys = anomalyCandidates
+            .Select(ToDataKey)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var outlierExpenses = expenses
+            .Where(e => candidateKeys.Contains(ToDataKey(MapExpenseToData(e))))
             .ToList();
+
+        if (outlierExpenses.Count == 0)
+        {
+            return Ok(Array.Empty<AlertDto>());
+        }
+
+        var mean = expenses.Average(e => e.Total);
+
+        // Hybrid candidates: ML/service outliers + rule-based medium/high deviation candidates.
+        var ruleCandidateKeys = expenses
+            .Where(e => mean != 0 && ((e.Total - mean) / mean) * 100 > 50)
+            .Select(e => ToDataKey(MapExpenseToData(e)))
+            .ToHashSet(StringComparer.Ordinal);
+
+        var mergedOutlierExpenses = expenses
+            .Where(e => candidateKeys.Contains(ToDataKey(MapExpenseToData(e))) || ruleCandidateKeys.Contains(ToDataKey(MapExpenseToData(e))))
+            .ToList();
+
+        var rawAlerts = new List<AlertDto>();
+        foreach (var e in mergedOutlierExpenses)
+        {
+            var deviation = mean == 0 ? 0 : ((e.Total - mean) / mean) * 100;
+            var severity = NormalizeRiskLevel(null, null, deviation);
+            var method = "RuleFallback";
+            var zScore = 0d;
+
+            try
+            {
+                var detect = await _anomalyService.DetectSingleEntryAnomalyAsync(MapExpenseToData(e), threshold);
+                severity = NormalizeRiskLevel(detect.RiskLevel, detect.Score, deviation);
+                method = detect.Method ?? "Unknown";
+                zScore = detect.Score.HasValue ? Math.Round(detect.Score.Value, 2) : 0;
+            }
+            catch
+            {
+                // Per-item fallback: keep dashboard resilient if anomaly engine fails for one row.
+            }
+
+            rawAlerts.Add(new AlertDto
+            {
+                Title = (string.IsNullOrWhiteSpace(e.Category) ? "Uncategorized" : e.Category) + " Expense Spike",
+                Category = string.IsNullOrWhiteSpace(e.Category) ? "Uncategorized" : e.Category,
+                Amount = Math.Round(e.Total, 2),
+                Average = Math.Round(mean, 2),
+                Deviation = Math.Round(deviation, 2),
+                Severity = severity,
+                Explanation = GenerateExplanation(e.Category, e.Total, mean, deviation, severity, method),
+                Suggestion = GenerateSuggestion(e.Category, severity),
+                CreatedAt = e.Date,
+                ZScore = zScore,
+                Occurrences = 1,
+                Method = method
+            });
+        }
 
         var alerts = rawAlerts
             .GroupBy(a => NormalizeCategoryKey(a.Category))
@@ -80,7 +124,8 @@ public class AlertsController : ControllerBase
                     Suggestion = representative.Suggestion,
                     CreatedAt = latestDate,
                     ZScore = representative.ZScore,
-                    Occurrences = occurrences
+                    Occurrences = occurrences,
+                    Method = representative.Method
                 };
             })
             .Where(a => includeLow || string.Equals(a.Severity, "Low", StringComparison.OrdinalIgnoreCase) == false)
@@ -92,11 +137,46 @@ public class AlertsController : ControllerBase
         return Ok(alerts);
     }
 
-    private static string CalculateSeverity(double zScore, double deviation)
+    private static ExpenseData MapExpenseToData(Expense e)
     {
-        if (zScore > 3 || deviation > 100) return "High";
-        if (zScore > 2 || deviation > 50) return "Medium";
-        return "Low";
+        return new ExpenseData
+        {
+            Date = e.Date,
+            Type = e.Type,
+            Payee = e.Payee,
+            Category = e.Category,
+            Total = e.Total,
+            Description = e.Description
+        };
+    }
+
+    private static string ToDataKey(ExpenseData d)
+    {
+        return d.Date.Date.ToString("yyyy-MM-dd") + "|" +
+               (d.Type ?? string.Empty).Trim() + "|" +
+               (d.Payee ?? string.Empty).Trim() + "|" +
+               (d.Category ?? string.Empty).Trim() + "|" +
+               d.Total.ToString("0.00");
+    }
+
+    private static string NormalizeRiskLevel(string? riskLevel, double? score, double deviation)
+    {
+        var normalized = "Low";
+
+        if (deviation > 100) normalized = "High";
+        else if (deviation > 50) normalized = "Medium";
+
+        if (score.HasValue)
+        {
+            if (score.Value >= 3) normalized = "High";
+            else if (score.Value >= 2 && normalized == "Low") normalized = "Medium";
+        }
+
+        var risk = (riskLevel ?? string.Empty).Trim();
+        if (risk.Contains("高") && normalized == "Low") return "Medium";
+        if (risk.Contains("中") && normalized == "Low") return "Medium";
+        if (risk.Contains("低")) return normalized;
+        return normalized;
     }
 
     private static int SeverityRank(string severity)
@@ -117,12 +197,14 @@ public class AlertsController : ControllerBase
         return baseExplanation + " Similar spikes appeared " + occurrences + " times.";
     }
 
-    private static string GenerateExplanation(string? category, double amount, double average, double deviation, string severity)
+    private static string GenerateExplanation(string? category, double amount, double average, double deviation, string severity, string? method)
     {
         var c = string.IsNullOrWhiteSpace(category) ? "Uncategorized" : category;
         var sign = deviation >= 0 ? "+" : "";
+        var m = string.IsNullOrWhiteSpace(method) ? "AnomalyEngine" : method;
         return c + " spending is " + sign + deviation.ToString("0.##") + "% vs average (" +
-               amount.ToString("0.00") + " vs " + average.ToString("0.00") + "), marked " + severity + " risk.";
+               amount.ToString("0.00") + " vs " + average.ToString("0.00") + "), marked " + severity +
+               " risk by " + m + ".";
     }
 
     private static string GenerateSuggestion(string? category, string severity)
@@ -161,4 +243,5 @@ public class AlertDto
     public DateTime CreatedAt { get; set; }
     public double ZScore { get; set; }
     public int Occurrences { get; set; }
+    public string Method { get; set; } = "";
 }

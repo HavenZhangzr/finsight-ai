@@ -7,10 +7,12 @@ using Microsoft.EntityFrameworkCore;
 public class InsightController : ControllerBase
 {
     private readonly AppDbContext _db;
+    private readonly IExpenseAnomalyDetectionService _anomalyService;
 
-    public InsightController(AppDbContext db)
+    public InsightController(AppDbContext db, IExpenseAnomalyDetectionService anomalyService)
     {
         _db = db;
+        _anomalyService = anomalyService;
     }
 
     [HttpGet("trends")]
@@ -93,10 +95,13 @@ public class InsightController : ControllerBase
     }
 
     [HttpGet("anomaly-explanations")]
-    public async Task<ActionResult<IEnumerable<AnomalyExplanationDto>>> GetAnomalyExplanations([FromQuery] int top = 6)
+    public async Task<ActionResult<IEnumerable<AnomalyExplanationDto>>> GetAnomalyExplanations(
+        [FromQuery] int top = 6,
+        [FromQuery] double threshold = 3.0)
     {
         if (top <= 0) top = 6;
         if (top > 30) top = 30;
+        if (threshold <= 0) threshold = 3.0;
 
         var expenses = await _db.Expenses
             .OrderByDescending(e => e.Date)
@@ -107,50 +112,113 @@ public class InsightController : ControllerBase
             return Ok(Array.Empty<AnomalyExplanationDto>());
         }
 
-        var mean = expenses.Average(e => e.Total);
-        var variance = expenses.Sum(e => Math.Pow(e.Total - mean, 2)) / expenses.Count;
-        var stdDev = Math.Sqrt(variance);
-
-        if (stdDev == 0)
+        var allData = expenses.Select(MapExpenseToData).ToList();
+        var anomalyCandidates = await _anomalyService.GetAmountOutliersAsync(allData, threshold);
+        if (anomalyCandidates.Count == 0)
         {
             return Ok(Array.Empty<AnomalyExplanationDto>());
         }
 
-        var result = expenses
-            .Select(e =>
-            {
-                var zScore = Math.Abs((e.Total - mean) / stdDev);
-                var severity = GetSeverity(zScore);
-                var deviationPercent = mean == 0 ? 0 : ((e.Total - mean) / mean) * 100;
-                var recommendation = GetRecommendation(severity, e.Category);
+        var candidateKeys = anomalyCandidates
+            .Select(ToDataKey)
+            .ToHashSet(StringComparer.Ordinal);
 
-                return new AnomalyExplanationDto
-                {
-                    ExpenseId = e.Id,
-                    Date = e.Date.ToString("yyyy-MM-dd"),
-                    Payee = e.Payee,
-                    Category = string.IsNullOrWhiteSpace(e.Category) ? "Uncategorized" : e.Category,
-                    Total = Math.Round(e.Total, 2),
-                    AverageAmount = Math.Round(mean, 2),
-                    DeviationPercent = Math.Round(deviationPercent, 2),
-                    ZScore = Math.Round(zScore, 2),
-                    Severity = severity,
-                    Method = "ZScore",
-                    RiskLevel = severity,
-                    Explanation = string.Format(
-                        "Spent {0:0.00} (Avg {1:0.00}), deviation {2:+0.##;-0.##;0}%.",
-                        e.Total,
-                        mean,
-                        deviationPercent),
-                    Recommendation = recommendation
-                };
-            })
-            .Where(x => x.ZScore >= 1.8)
-            .OrderByDescending(x => x.ZScore)
-            .Take(top)
+        var outlierExpenses = expenses
+            .Where(e => candidateKeys.Contains(ToDataKey(MapExpenseToData(e))))
             .ToList();
 
-        return Ok(result);
+        if (outlierExpenses.Count == 0)
+        {
+            return Ok(Array.Empty<AnomalyExplanationDto>());
+        }
+
+        var mean = expenses.Average(e => e.Total);
+
+        var result = new List<AnomalyExplanationDto>();
+        foreach (var e in outlierExpenses)
+        {
+            var detect = await _anomalyService.DetectSingleEntryAnomalyAsync(MapExpenseToData(e), threshold);
+            var category = string.IsNullOrWhiteSpace(e.Category) ? "Uncategorized" : e.Category;
+            var deviationPercent = mean == 0 ? 0 : ((e.Total - mean) / mean) * 100;
+            var severity = NormalizeRiskLevel(detect.RiskLevel, detect.Score, deviationPercent);
+            var recommendation = GetRecommendation(severity, category);
+
+            result.Add(new AnomalyExplanationDto
+            {
+                ExpenseId = e.Id,
+                Date = e.Date.ToString("yyyy-MM-dd"),
+                Payee = e.Payee,
+                Category = category,
+                Total = Math.Round(e.Total, 2),
+                AverageAmount = Math.Round(mean, 2),
+                DeviationPercent = Math.Round(deviationPercent, 2),
+                ZScore = detect.Score.HasValue ? Math.Round(detect.Score.Value, 2) : 0,
+                Severity = severity,
+                Method = detect.Method ?? "AnomalyEngine",
+                RiskLevel = severity,
+                Explanation = string.Format(
+                    "Spent {0:0.00} (Avg {1:0.00}), deviation {2:+0.##;-0.##;0}%.",
+                    e.Total,
+                    mean,
+                    deviationPercent),
+                Recommendation = recommendation
+            });
+        }
+
+        return Ok(result
+            .OrderByDescending(x => SeverityRank(x.Severity))
+            .ThenByDescending(x => Math.Abs(x.DeviationPercent))
+            .Take(top)
+            .ToList());
+    }
+
+    private static ExpenseData MapExpenseToData(Expense e)
+    {
+        return new ExpenseData
+        {
+            Date = e.Date,
+            Type = e.Type,
+            Payee = e.Payee,
+            Category = e.Category,
+            Total = e.Total,
+            Description = e.Description
+        };
+    }
+
+    private static string ToDataKey(ExpenseData d)
+    {
+        return d.Date.Date.ToString("yyyy-MM-dd") + "|" +
+               (d.Type ?? string.Empty).Trim() + "|" +
+               (d.Payee ?? string.Empty).Trim() + "|" +
+               (d.Category ?? string.Empty).Trim() + "|" +
+               d.Total.ToString("0.00");
+    }
+
+    private static string NormalizeRiskLevel(string? riskLevel, double? score, double deviation)
+    {
+        var normalized = "Low";
+
+        if (deviation > 100) normalized = "High";
+        else if (deviation > 50) normalized = "Medium";
+
+        if (score.HasValue)
+        {
+            if (score.Value >= 3) normalized = "High";
+            else if (score.Value >= 2 && normalized == "Low") normalized = "Medium";
+        }
+
+        var risk = (riskLevel ?? string.Empty).Trim();
+        if (risk.Contains("高") && normalized == "Low") return "Medium";
+        if (risk.Contains("中") && normalized == "Low") return "Medium";
+        if (risk.Contains("低")) return normalized;
+        return normalized;
+    }
+
+    private static int SeverityRank(string severity)
+    {
+        if (severity == "High") return 3;
+        if (severity == "Medium") return 2;
+        return 1;
     }
 
     private static string NormalizeGranularity(string? raw)
@@ -216,13 +284,6 @@ public class InsightController : ControllerBase
     {
         var offset = ((int)date.DayOfWeek + 6) % 7;
         return date.AddDays(-offset).Date;
-    }
-
-    private static string GetSeverity(double zScore)
-    {
-        if (zScore >= 3) return "High";
-        if (zScore >= 2) return "Medium";
-        return "Low";
     }
 
     private static string GetRecommendation(string severity, string category)

@@ -186,14 +186,24 @@ public class ExpenseAnomalyDetectionService : IExpenseAnomalyDetectionService
 
         // 得到历史数据下所有分数（归一化分数用以风险评估）
         var historicalScores = GetHistoricalIsolationScores(model, historicalData);
+        if (historicalScores.Count == 0)
+        {
+            return new AnomalyResult { IsAnomaly = zAnomaly, Score = zScore, Method = "ZScore", RiskLevel = risk };
+        }
+
         double minScore = historicalScores.Min();
         double maxScore = historicalScores.Max();
 
-        // var result = PredictIsolationForest(model, new List<ExpenseData> { newEntry }).First();
-        // return result.IsOutlier;
         var dataView = _mlContext.Data.LoadFromEnumerable(new List<ExpenseData> { newEntry });
         var transformed = model.Transform(dataView);
-        var prediction = _mlContext.Data.CreateEnumerable<AnomalyPrediction>(transformed, reuseRowObject: false).First();
+        var prediction = _mlContext.Data.CreateEnumerable<AnomalyPrediction>(transformed, reuseRowObject: false)
+            .FirstOrDefault();
+
+        if (prediction == null)
+        {
+            return new AnomalyResult { IsAnomaly = zAnomaly, Score = zScore, Method = "ZScore", RiskLevel = risk };
+        }
+
         double? rawScore = prediction.Score;
 
         // double? score = (double)prediction.Score;

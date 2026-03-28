@@ -245,7 +245,7 @@ export default function InsightDashboardPage() {
         const [trendResp, categoryResp, alertsResp] = await Promise.all([
           fetch(trendUrl),
           fetch('/api/Insight/category-breakdown?top=5'),
-          fetch('/api/Alerts?includeLow=false&top=6'),
+          fetch('/api/Alerts?includeLow=false&top=8&threshold=2.5'),
         ]);
 
         if (trendResp.ok === false || categoryResp.ok === false || alertsResp.ok === false) {
