@@ -136,60 +136,60 @@ public class ExpenseAnomalyDetectionService : IExpenseAnomalyDetectionService
     // 检测单条数据是否异常
     public async Task<AnomalyResult> DetectSingleEntryAnomalyAsync(ExpenseData newEntry, double threshold)
     {
-        // 从数据库获取历史记录。
         var historicalExpenses = await _db.Expenses.ToListAsync();
         var historicalData = historicalExpenses.Select(MapExpenseToData).ToList();
 
-        // 阶段 1: 使用 Z-Score 检测
-        // if (IsOutlierByZScoreSingle(historicalData, newEntry, threshold))
-        //     return true;
+        var historicalAverage = historicalData.Count > 0 ? historicalData.Average(e => e.Total) : 0;
+        var currentAmount = newEntry.Total;
+        var deviationPercent = historicalAverage == 0 ? 0 : ((currentAmount - historicalAverage) / historicalAverage) * 100;
+
+        AnomalyResult BuildResult(bool isAnomaly, double? score, string method, string riskLevel)
+        {
+            return new AnomalyResult
+            {
+                IsAnomaly = isAnomaly,
+                Score = score,
+                Method = method,
+                RiskLevel = riskLevel,
+                HistoricalAverage = Math.Round(historicalAverage, 2),
+                CurrentAmount = Math.Round(currentAmount, 2),
+                DeviationPercent = Math.Round(deviationPercent, 2),
+                Reason = BuildReason(riskLevel, deviationPercent),
+                Suggestions = BuildSuggestions(riskLevel, deviationPercent)
+            };
+        }
+
         double zScore = 0;
         bool zAnomaly = false;
         string risk = "正常范围";
+
         if (historicalData.Count > 0)
         {
-            var mean = historicalData.Average(e => e.Total);
+            var mean = historicalAverage;
             var stddev = Math.Sqrt(historicalData.Sum(e => Math.Pow(e.Total - mean, 2)) / historicalData.Count);
             if (stddev != 0)
             {
                 zScore = Math.Abs((newEntry.Total - mean) / stddev);
                 zAnomaly = zScore > threshold;
             }
-            if (zScore > threshold)
-                risk = "高风险";
-            else if (zScore > threshold - 1)
-                risk = "中风险";
-            else
-                risk = "正常范围";
+
+            if (zScore > threshold) risk = "高风险";
+            else if (zScore > threshold - 1) risk = "中风险";
+            else risk = "正常范围";
         }
+
         if (zAnomaly)
         {
-            return new AnomalyResult
-            {
-                IsAnomaly = true,
-                Score = zScore,
-                Method = "ZScore",
-                RiskLevel = risk
-            };
+            return BuildResult(true, zScore, "ZScore", risk);
         }
 
-        // 阶段 2: 使用 Isolation Forest 检测
-        // if (historicalData.Count < 5) // 防止少量数据报错
-        //     return false;
-        // if (historicalData.Count < 5)
-        //     return new AnomalyResult { IsAnomaly = false, Score = zScore, Method = "ZScore", RiskLevel = "正常范围" };
-
-        // var model = TrainIsolationForestModel(historicalData);
         var model = _isolationForestModel;
         if (model == null || historicalData.Count < 5)
-            return new AnomalyResult { IsAnomaly = false, Score = zScore, Method = "ZScore", RiskLevel = "正常范围" };
+            return BuildResult(false, zScore, "ZScore", "正常范围");
 
-        // 得到历史数据下所有分数（归一化分数用以风险评估）
         var historicalScores = GetHistoricalIsolationScores(model, historicalData);
         if (historicalScores.Count == 0)
-        {
-            return new AnomalyResult { IsAnomaly = zAnomaly, Score = zScore, Method = "ZScore", RiskLevel = risk };
-        }
+            return BuildResult(zAnomaly, zScore, "ZScore", risk);
 
         double minScore = historicalScores.Min();
         double maxScore = historicalScores.Max();
@@ -200,17 +200,9 @@ public class ExpenseAnomalyDetectionService : IExpenseAnomalyDetectionService
             .FirstOrDefault();
 
         if (prediction == null)
-        {
-            return new AnomalyResult { IsAnomaly = zAnomaly, Score = zScore, Method = "ZScore", RiskLevel = risk };
-        }
+            return BuildResult(zAnomaly, zScore, "ZScore", risk);
 
         double? rawScore = prediction.Score;
-
-        // double? score = (double)prediction.Score;
-        // if (score.HasValue && (double.IsNaN(score.Value) || double.IsInfinity(score.Value)))
-        // {
-        //     score = null;
-        // }
         double? normScore = null;
         if (rawScore.HasValue && !double.IsNaN(rawScore.Value) && !double.IsInfinity(rawScore.Value))
         {
@@ -218,25 +210,48 @@ public class ExpenseAnomalyDetectionService : IExpenseAnomalyDetectionService
         }
 
         risk = "";
-        if (!normScore.HasValue)
-            risk = "分数不可用";
-        else if (normScore.Value >= 0.7)
-            risk = "高风险";
-        else if (normScore.Value >= 0.4)
-            risk = "中风险";
-        else if (normScore.Value >= 0.3)
-            risk = "低风险";
-        else
-            risk = "正常范围";
+        if (!normScore.HasValue) risk = "分数不可用";
+        else if (normScore.Value >= 0.7) risk = "高风险";
+        else if (normScore.Value >= 0.4) risk = "中风险";
+        else if (normScore.Value >= 0.3) risk = "低风险";
+        else risk = "正常范围";
 
-        // 通常 prediction.Score 大于某个阈值即异常
-        return new AnomalyResult
+        return BuildResult(prediction.PredictedLabel, normScore, "IsolationForest", risk);
+    }
+
+    private static string BuildReason(string riskLevel, double deviationPercent)
+    {
+        var absDeviation = Math.Abs(deviationPercent);
+        if (riskLevel == "高风险")
+            return "This amount is significantly different from your historical pattern.";
+        if (riskLevel == "中风险")
+            return "This amount is noticeably above your normal spending range.";
+        if (absDeviation >= 50)
+            return "This amount is above your historical average and should be reviewed.";
+        return "No strong anomaly signal was detected for this entry.";
+    }
+
+    private static List<string> BuildSuggestions(string riskLevel, double deviationPercent)
+    {
+        var items = new List<string>();
+
+        if (riskLevel == "高风险" || Math.Abs(deviationPercent) >= 100)
         {
-            IsAnomaly = prediction.PredictedLabel,
-            Score = normScore,
-            Method = "IsolationForest",
-            RiskLevel = risk
-        };
+            items.Add("Verify the entered amount.");
+            items.Add("Check invoice details and supporting documents.");
+            items.Add("Confirm whether this is a one-time or recurring cost.");
+            return items;
+        }
+
+        if (riskLevel == "中风险" || Math.Abs(deviationPercent) >= 50)
+        {
+            items.Add("Review this transaction against recent similar expenses.");
+            items.Add("Confirm category assignment and payee details.");
+            return items;
+        }
+
+        items.Add("Monitor this category in the next cycle.");
+        return items;
     }
 
     // 批量检测：通过两阶段检测 Z-Score(统计方法) 和 Isolation Forest(机器学习算法) 筛选异常账单。

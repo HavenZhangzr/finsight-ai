@@ -58,4 +58,9 @@ public class AnomalyResult
     public double? Score { get; set; } // 异常分数
     public string? Method { get; set; } // 可选：ZScore/IsolationForest
     public string? RiskLevel { get; set; } // 新增风险分级字段，便于前端拓展
+    public double? HistoricalAverage { get; set; }
+    public double? CurrentAmount { get; set; }
+    public double? DeviationPercent { get; set; }
+    public string? Reason { get; set; }
+    public List<string> Suggestions { get; set; } = new();
 }
