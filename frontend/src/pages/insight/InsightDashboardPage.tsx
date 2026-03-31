@@ -22,6 +22,9 @@ import SendRoundedIcon from '@mui/icons-material/SendRounded';
 import SmartToyRoundedIcon from '@mui/icons-material/SmartToyRounded';
 import PersonRoundedIcon from '@mui/icons-material/PersonRounded';
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
+import WarningAmberRoundedIcon from '@mui/icons-material/WarningAmberRounded';
+import LightbulbRoundedIcon from '@mui/icons-material/LightbulbRounded';
+import InsightsRoundedIcon from '@mui/icons-material/InsightsRounded';
 
 type Granularity = 'day' | 'week' | 'month';
 
@@ -84,6 +87,61 @@ function MetricCard({ title, value, tone = 'neutral' }: MetricCardProps) {
         <Typography variant="h4" sx={{ mt: 1, color, fontWeight: 700 }}>{value}</Typography>
       </CardContent>
     </Card>
+  );
+}
+
+function renderAssistantContent(text: string) {
+  const lines = text.split('\n');
+  return (
+    <Stack spacing={0.6}>
+      {lines.map((line, idx) => {
+        const trimmed = line.trim();
+        if (!trimmed) {
+          return <Box key={String(idx)} sx={{ height: 6 }} />;
+        }
+
+        if (trimmed.startsWith('Summary:')) {
+          return (
+            <Stack key={String(idx)} direction="row" spacing={1} alignItems="center">
+              <WarningAmberRoundedIcon sx={{ color: '#f59f00', fontSize: 18 }} />
+              <Typography variant="body1" sx={{ fontWeight: 700 }}>{trimmed}</Typography>
+            </Stack>
+          );
+        }
+
+        if (trimmed.startsWith('Key insights:')) {
+          return (
+            <Stack key={String(idx)} direction="row" spacing={1} alignItems="center">
+              <InsightsRoundedIcon sx={{ color: '#2f6fed', fontSize: 18 }} />
+              <Typography variant="body1" sx={{ fontWeight: 700 }}>{trimmed}</Typography>
+            </Stack>
+          );
+        }
+
+        if (trimmed.startsWith('Recommended actions:')) {
+          return (
+            <Stack key={String(idx)} direction="row" spacing={1} alignItems="center">
+              <LightbulbRoundedIcon sx={{ color: '#f5b400', fontSize: 18 }} />
+              <Typography variant="body1" sx={{ fontWeight: 700 }}>{trimmed}</Typography>
+            </Stack>
+          );
+        }
+
+        if (trimmed.startsWith('•')) {
+          return (
+            <Typography key={String(idx)} variant="body1" sx={{ pl: 2 }}>
+              {trimmed}
+            </Typography>
+          );
+        }
+
+        return (
+          <Typography key={String(idx)} variant="body1">
+            {line}
+          </Typography>
+        );
+      })}
+    </Stack>
   );
 }
 
@@ -536,7 +594,9 @@ export default function InsightDashboardPage() {
                               border: m.role === 'user' ? '1px solid #d6e2ff' : '1px solid #e7e8ee',
                             }}
                           >
-                            <Typography variant="body1" sx={{ whiteSpace: "pre-line" }}>{m.text}</Typography>
+                            {m.role === 'assistant'
+                              ? renderAssistantContent(m.text)
+                              : <Typography variant="body1" sx={{ whiteSpace: 'pre-line' }}>{m.text}</Typography>}
                           </Box>
 
                           {m.role === 'user' ? (

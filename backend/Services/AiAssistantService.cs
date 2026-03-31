@@ -115,8 +115,9 @@ public class AiAssistantService : IAiAssistantService
     {
         var nl = Environment.NewLine;
         return
-            "You are an AI financial assistant for a business expense management product." + nl +
-            "Your job is to analyze expense patterns and anomalies, then give clear, actionable guidance." + nl +
+            "You are a financial decision assistant for a business expense management product." + nl +
+            "Your job is to analyze overall expense patterns and anomalies, then give clear, actionable guidance." + nl +
+            "Focus on trends, biggest issues, and cost optimization opportunities." + nl +
             "Write like a product assistant, not an academic report." + nl +
             "Keep answers concise, practical, and easy to scan.";
     }
@@ -181,7 +182,7 @@ public class AiAssistantService : IAiAssistantService
 
     private static string BuildAnomalySystemPrompt()
     {
-        return "You are an AI financial assistant for expense anomaly analysis. Return valid JSON only.";
+        return "You are an AI financial assistant analyzing a specific expense anomaly. Return valid JSON only.";
     }
 
     private static string BuildAnomalyUserPrompt(AnomalyExplainRequest request)
@@ -205,7 +206,8 @@ public class AiAssistantService : IAiAssistantService
             "- Keep it concise" + Environment.NewLine +
             "- Use real numbers provided" + Environment.NewLine +
             "- Causes: 2-3 items" + Environment.NewLine +
-            "- Actions: practical and actionable";
+            "- Actions: practical and actionable" + Environment.NewLine +
+            "- Summary must state whether this looks normal or suspicious";
     }
 
     private static AnomalyExplainResponse ParseJsonResponse(string raw)
@@ -258,13 +260,14 @@ public class AiAssistantService : IAiAssistantService
             "- Use clean line breaks." + nl +
             "" + nl +
             "Output EXACTLY in this format:" + nl +
-            "⚠️ Summary:" + nl +
+            "Summary:" + nl +
             "Short one-line explanation" + nl +
             "" + nl +
+            "Key insights:" + nl +
             "• Key insight 1" + nl +
             "• Key insight 2" + nl +
             "" + nl +
-            "💡 Suggested actions:" + nl +
+            "Recommended actions:" + nl +
             "• Action 1" + nl +
             "• Action 2";
     }
