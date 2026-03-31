@@ -15,25 +15,79 @@ public class AiAssistantService : IAiAssistantService
 
     public async Task<string> GenerateAnswerAsync(string question, AiPromptContext context, CancellationToken cancellationToken = default)
     {
+        var model = _config["OpenAI:Model"] ?? "gpt-4o-mini";
+        var content = await SendChatCompletionAsync(
+            BuildSystemPrompt(),
+            BuildUserPrompt(question, context),
+            model,
+            0.2,
+            cancellationToken);
+
+        if (string.IsNullOrWhiteSpace(content))
+        {
+            throw new InvalidOperationException("OpenAI returned empty content.");
+        }
+
+        return content.Trim();
+    }
+
+    public async Task<AnomalyExplainResponse> GenerateAnomalyExplanationAsync(AnomalyExplainRequest request, CancellationToken cancellationToken = default)
+    {
+        var model = _config["OpenAI:Model"] ?? "gpt-4o-mini";
+        var raw = await SendChatCompletionAsync(
+            BuildAnomalySystemPrompt(),
+            BuildAnomalyUserPrompt(request),
+            model,
+            0.1,
+            cancellationToken);
+
+        var parsed = ParseJsonResponse(raw);
+        parsed.Model = model;
+
+        if (string.IsNullOrWhiteSpace(parsed.Summary))
+        {
+            throw new InvalidOperationException("OpenAI anomaly explanation returned empty summary.");
+        }
+
+        if (parsed.Causes.Count == 0)
+        {
+            parsed.Causes.Add("Unexpected expense behavior compared with historical baseline.");
+        }
+
+        if (parsed.Actions.Count == 0)
+        {
+            parsed.Actions.Add("Review this transaction and verify supporting details.");
+        }
+
+        return parsed;
+    }
+
+    private async Task<string> SendChatCompletionAsync(
+        string systemPrompt,
+        string userPrompt,
+        string model,
+        double temperature,
+        CancellationToken cancellationToken)
+    {
         var configuredKey = _config["OpenAI:ApiKey"];
         var apiKey = string.IsNullOrWhiteSpace(configuredKey)
             ? Environment.GetEnvironmentVariable("OPENAI_API_KEY")
             : configuredKey;
+
         apiKey = apiKey?.Trim();
         if (string.IsNullOrWhiteSpace(apiKey))
         {
             throw new InvalidOperationException("OpenAI API key is missing. Set OpenAI:ApiKey or OPENAI_API_KEY.");
         }
 
-        var model = _config["OpenAI:Model"] ?? "gpt-4o-mini";
         var payload = new
         {
             model,
-            temperature = 0.2,
+            temperature,
             messages = new object[]
             {
-                new { role = "system", content = BuildSystemPrompt() },
-                new { role = "user", content = BuildUserPrompt(question, context) }
+                new { role = "system", content = systemPrompt },
+                new { role = "user", content = userPrompt }
             }
         };
 
@@ -50,18 +104,11 @@ public class AiAssistantService : IAiAssistantService
         }
 
         using var doc = JsonDocument.Parse(raw);
-        var content = doc.RootElement
+        return doc.RootElement
             .GetProperty("choices")[0]
             .GetProperty("message")
             .GetProperty("content")
-            .GetString();
-
-        if (string.IsNullOrWhiteSpace(content))
-        {
-            throw new InvalidOperationException("OpenAI returned empty content.");
-        }
-
-        return content.Trim();
+            .GetString() ?? string.Empty;
     }
 
     private static string BuildSystemPrompt()
@@ -93,11 +140,11 @@ public class AiAssistantService : IAiAssistantService
         {
             for (var i = 0; i < context.Anomalies.Count; i++)
             {
-                var a = context.Anomalies[i];
-                var deviation = a.Average == 0 ? 0 : ((a.Amount - a.Average) / a.Average) * 100;
-                sb.AppendLine((i + 1).ToString() + ". " + a.Category);
-                sb.AppendLine("   - Amount: $" + a.Amount.ToString("0.00"));
-                sb.AppendLine("   - Average: $" + a.Average.ToString("0.00"));
+                var anomaly = context.Anomalies[i];
+                var deviation = anomaly.Average == 0 ? 0 : ((anomaly.Amount - anomaly.Average) / anomaly.Average) * 100;
+                sb.AppendLine((i + 1).ToString() + ". " + anomaly.Category);
+                sb.AppendLine("   - Amount: $" + anomaly.Amount.ToString("0.00"));
+                sb.AppendLine("   - Average: $" + anomaly.Average.ToString("0.00"));
                 sb.AppendLine("   - Deviation: " + SignedPercent(deviation));
             }
         }
@@ -127,12 +174,77 @@ public class AiAssistantService : IAiAssistantService
         sb.AppendLine("User Question:");
         sb.AppendLine(question);
         sb.AppendLine();
-        sb.AppendLine(BuildOutputInstruction(question));
+        sb.AppendLine(BuildOutputInstruction());
 
         return sb.ToString().Trim();
     }
 
-    private static string BuildOutputInstruction(string question)
+    private static string BuildAnomalySystemPrompt()
+    {
+        return "You are an AI financial assistant for expense anomaly analysis. Return valid JSON only.";
+    }
+
+    private static string BuildAnomalyUserPrompt(AnomalyExplainRequest request)
+    {
+        return
+            "Analyze this anomaly and return JSON only:" + Environment.NewLine +
+            "- Category: " + request.Category + Environment.NewLine +
+            "- Current amount: $" + request.Current.ToString("0.##") + Environment.NewLine +
+            "- Average amount: $" + request.Avg.ToString("0.##") + Environment.NewLine +
+            "- Deviation: " + request.Deviation.ToString("0.##") + "%" + Environment.NewLine +
+            "- Risk level: " + request.RiskLevel + Environment.NewLine +
+            Environment.NewLine +
+            "Return JSON with this exact shape:" + Environment.NewLine +
+            "{" + Environment.NewLine +
+            "  \"summary\": \"...\"," + Environment.NewLine +
+            "  \"causes\": [\"...\", \"...\"]," + Environment.NewLine +
+            "  \"actions\": [\"...\", \"...\"]" + Environment.NewLine +
+            "}" + Environment.NewLine +
+            Environment.NewLine +
+            "Rules:" + Environment.NewLine +
+            "- Keep it concise" + Environment.NewLine +
+            "- Use real numbers provided" + Environment.NewLine +
+            "- Causes: 2-3 items" + Environment.NewLine +
+            "- Actions: practical and actionable";
+    }
+
+    private static AnomalyExplainResponse ParseJsonResponse(string raw)
+    {
+        var options = new JsonSerializerOptions
+        {
+            PropertyNameCaseInsensitive = true
+        };
+
+        var trimmed = raw.Trim();
+
+        try
+        {
+            var parsed = JsonSerializer.Deserialize<AnomalyExplainResponse>(trimmed, options);
+            if (parsed != null)
+            {
+                return parsed;
+            }
+        }
+        catch
+        {
+        }
+
+        var firstBrace = trimmed.IndexOf('{');
+        var lastBrace = trimmed.LastIndexOf('}');
+        if (firstBrace >= 0 && lastBrace > firstBrace)
+        {
+            var jsonOnly = trimmed.Substring(firstBrace, lastBrace - firstBrace + 1);
+            var parsed = JsonSerializer.Deserialize<AnomalyExplainResponse>(jsonOnly, options);
+            if (parsed != null)
+            {
+                return parsed;
+            }
+        }
+
+        throw new InvalidOperationException("Unable to parse AI anomaly explanation JSON.");
+    }
+
+    private static string BuildOutputInstruction()
     {
         var nl = Environment.NewLine;
         return
@@ -154,14 +266,7 @@ public class AiAssistantService : IAiAssistantService
             "" + nl +
             "💡 Suggested actions:" + nl +
             "• Action 1" + nl +
-            "• Action 2" + nl +
-            "" + nl +
-            "Bad example (DO NOT do this):" + nl +
-            "• A • B • C in one paragraph" + nl +
-            "Good example:" + nl +
-            "• A" + nl +
-            "• B" + nl +
-            "• C";
+            "• Action 2";
     }
 
     private static string SignedPercent(double value)

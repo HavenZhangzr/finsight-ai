@@ -26,8 +26,6 @@ import UploadFileIcon from "@mui/icons-material/UploadFile";
 import AutoAwesomeIcon from "@mui/icons-material/AutoAwesome";
 import WarningAmberRoundedIcon from "@mui/icons-material/WarningAmberRounded";
 import LightbulbRoundedIcon from "@mui/icons-material/LightbulbRounded";
-import ChevronRightRoundedIcon from "@mui/icons-material/ChevronRightRounded";
-import InfoOutlinedIcon from "@mui/icons-material/InfoOutlined";
 import { useParams } from "react-router-dom";
 
 type ExpenseType = "Expense" | "Bill" | "Check" | "PurchaseOrder";
@@ -63,6 +61,14 @@ type AnomalyResultDto = {
   deviationPercent?: number;
   reason?: string;
   suggestions?: string[];
+};
+
+type AiInsightDto = {
+  summary: string;
+  causes: string[];
+  actions: string[];
+  model?: string;
+  fallbackReason?: string;
 };
 
 const payeeOptions = [
@@ -152,7 +158,9 @@ const ExpenseEditPage: React.FC<ExpenseEditProps> = () => {
   const [categoryAccepted, setCategoryAccepted] = useState(false);
 
   const [anomaly, setAnomaly] = useState<AnomalyResultDto | null>(null);
-  const [showAnomalyDetails, setShowAnomalyDetails] = useState(false);
+  const [aiInsight, setAiInsight] = useState<AiInsightDto | null>(null);
+  const [aiInsightLoading, setAiInsightLoading] = useState(false);
+  const [aiInsightError, setAiInsightError] = useState<string | null>(null);
 
   useEffect(() => {
     if (isEdit && id) {
@@ -254,15 +262,59 @@ const ExpenseEditPage: React.FC<ExpenseEditProps> = () => {
     setCategoryAccepted(true);
   };
 
+  async function fetchAiInsight(category: string, current: number, avg: number, deviation: number, riskLevel: string) {
+    setAiInsightLoading(true);
+    setAiInsightError(null);
+    try {
+      const resp = await fetch("/api/Ai/explain-anomaly", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          category,
+          current,
+          avg,
+          deviation,
+          riskLevel,
+        }),
+      });
+
+      if (resp.ok === false) {
+        throw new Error("AI explanation request failed.");
+      }
+
+      const data = (await resp.json()) as AiInsightDto;
+      if (!data?.summary) {
+        throw new Error("AI explanation response is empty.");
+      }
+
+      setAiInsight({
+        summary: data.summary,
+        causes: Array.isArray(data.causes) ? data.causes : [],
+        actions: Array.isArray(data.actions) ? data.actions : [],
+        model: data.model,
+        fallbackReason: data.fallbackReason,
+      });
+    } catch (error) {
+      setAiInsight(null);
+      setAiInsightError(error instanceof Error ? error.message : "AI insight is currently unavailable.");
+    } finally {
+      setAiInsightLoading(false);
+    }
+  }
+
   async function checkTotalAnomaly(total: string, payee: string, type: string) {
     if (!payee?.trim() || !type?.trim()) {
       setTotalTip("Complete Type and Payee for more accurate AI anomaly detection.");
       setAnomaly(null);
+      setAiInsight(null);
+      setAiInsightError(null);
       return;
     }
 
     if (!total || isNaN(Number(total))) {
       setAnomaly(null);
+      setAiInsight(null);
+      setAiInsightError(null);
       return;
     }
 
@@ -286,39 +338,46 @@ const ExpenseEditPage: React.FC<ExpenseEditProps> = () => {
 
     if (!result) {
       setAnomaly(null);
+      setAiInsight(null);
+      setAiInsightError(null);
       return;
     }
 
     const current = Number(total);
-    const avg = result.historicalAverage ?? null;
-    const derivedDeviation = avg && avg !== 0 ? ((current - avg) / avg) * 100 : undefined;
+    const avg = result.historicalAverage ?? 0;
+    const deviation = result.deviationPercent ?? (avg === 0 ? 0 : ((current - avg) / avg) * 100);
 
-    setTotalTip(null);
-    setAnomaly({
+    const normalized: AnomalyResultDto = {
       ...result,
       currentAmount: result.currentAmount ?? current,
-      deviationPercent: result.deviationPercent ?? derivedDeviation,
+      historicalAverage: avg,
+      deviationPercent: deviation,
       suggestions:
         result.suggestions && result.suggestions.length > 0
           ? result.suggestions
           : ["Verify the entered amount.", "Check invoice details.", "Confirm category assignment."],
-    });
+    };
+
+    setTotalTip(null);
+    setAnomaly(normalized);
+
+    const risk = (normalized.riskLevel ?? "").toString();
+    const riskIndicatesAlert = risk !== "" && risk !== "正常范围";
+    const deviationIndicatesAlert = Math.abs(normalized.deviationPercent ?? 0) >= 30;
+    const shouldExplainWithAi = riskIndicatesAlert || deviationIndicatesAlert;
+
+    if (shouldExplainWithAi) {
+      await fetchAiInsight(
+        formData.category || "Uncategorized",
+        normalized.currentAmount ?? current,
+        normalized.historicalAverage ?? avg,
+        normalized.deviationPercent ?? deviation,
+        normalized.riskLevel ?? "Unknown");
+    } else {
+      setAiInsight(null);
+      setAiInsightError(null);
+    }
   }
-
-  const quickActionFixAmount = () => {
-    setFormData((prev) => ({ ...prev, total: "" }));
-    setSnackbar({ open: true, message: "Amount cleared. Please re-enter and validate." });
-  };
-
-  const quickActionReassign = () => {
-    setCategoryTip("Please re-check and choose a more suitable category.");
-    setSnackbar({ open: true, message: "You can now reassign category." });
-  };
-
-  const quickActionMarkValid = () => {
-    setTotalTip("Marked as valid exception for this entry.");
-    setSnackbar({ open: true, message: "Marked as valid exception." });
-  };
 
   const handleSave = async () => {
     if (!formData.date) {
@@ -377,10 +436,22 @@ const ExpenseEditPage: React.FC<ExpenseEditProps> = () => {
     setCategorySuggestion(null);
     setCategoryAccepted(false);
     setAnomaly(null);
+    setAiInsight(null);
+    setAiInsightError(null);
   };
 
   return (
-    <Paper sx={{ width: "100%", maxWidth: "none", margin: "24px 0", p: { xs: 2, md: 3.5 }, borderRadius: 2.5, border: "1px solid #dfe5f2" }}>
+    <Paper
+      sx={{
+        width: "100%",
+        maxWidth: 960,
+        minWidth: { xs: "100%", md: 760 },
+        margin: "24px auto",
+        p: { xs: 2, md: 3.5 },
+        borderRadius: 2.5,
+        border: "1px solid #dfe5f2",
+      }}
+    >
       <Typography variant="h4" sx={{ mb: 3, fontWeight: 700 }}>
         Edit Expense
       </Typography>
@@ -542,29 +613,15 @@ const ExpenseEditPage: React.FC<ExpenseEditProps> = () => {
                 </Box>
                 <Box>
                   <Typography>
-                    • Deviation: {(anomaly.deviationPercent ?? 0) >= 0 ? "+" : ""}
-                    {(anomaly.deviationPercent ?? 0).toFixed(1)}%
+                    • {(anomaly.deviationPercent ?? 0) >= 0
+                      ? `This amount is ${(anomaly.deviationPercent ?? 0).toFixed(1)}% higher than your usual expenses.`
+                      : `This amount is ${Math.abs(anomaly.deviationPercent ?? 0).toFixed(1)}% lower than your usual expenses.`}
                   </Typography>
                 </Box>
-                <Box>
-                  <Typography>• Method: {anomaly.method ?? "AnomalyEngine"}</Typography>
-                </Box>
+                {/* Hidden for now: Method (ZScore/engine) row. */}
               </Box>
 
-              <Stack direction="row" spacing={1.2} sx={{ mt: 1.6 }}>
-                <Button variant="outlined" onClick={() => setShowAnomalyDetails((v) => !v)}>
-                  View Details
-                </Button>
-                <Button variant="contained" onClick={() => setSnackbar({ open: true, message: "Use AI Assistant in Dashboard for full Q&A." })}>
-                  Ask AI
-                </Button>
-              </Stack>
-
-              {showAnomalyDetails ? (
-                <Alert severity={getRiskTone(anomaly.riskLevel)} sx={{ mt: 1.5 }} icon={<InfoOutlinedIcon />}>
-                  Score: {typeof anomaly.score === "number" ? anomaly.score.toFixed(2) : "--"} | Risk: {anomaly.riskLevel}
-                </Alert>
-              ) : null}
+              {/* Hidden for now: View Details / Ask AI buttons and score-risk detail row. */}
             </CardContent>
           </Card>
         ) : null}
@@ -577,43 +634,57 @@ const ExpenseEditPage: React.FC<ExpenseEditProps> = () => {
                 AI Insight
               </Typography>
 
-              <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", md: "1.5fr 1fr" }, gap: 2 }}>
-                <Box>
-                  <Typography sx={{ mb: 0.8 }}>
-                    This expense appears unusually high compared to historical data.
-                  </Typography>
-                  <Typography sx={{ fontWeight: 700, mb: 0.6 }}>It may be caused by:</Typography>
-                  <Typography>• Data entry error</Typography>
-                  <Typography>• One-time large purchase</Typography>
-                  <Typography>• Incorrect category assignment</Typography>
+              {aiInsightLoading ? (
+                <Typography sx={{ color: "#4d5668" }}>Analyzing with AI...</Typography>
+              ) : aiInsight ? (
+                <Box sx={{ display: "grid", gridTemplateColumns: "1fr", gap: 2 }}>
+                  <Box>
+                    <Typography sx={{ mb: 0.8, whiteSpace: "normal", overflowWrap: "anywhere", wordBreak: "break-word" }}>
+                      ⚠️ {aiInsight.summary}
+                    </Typography>
 
+                    <Typography sx={{ fontWeight: 700, mb: 0.6 }}>Possible causes:</Typography>
+                    {aiInsight.causes.map((cause, idx) => (
+                      <Typography key={idx} sx={{ whiteSpace: "normal", overflowWrap: "anywhere", wordBreak: "break-word" }}>
+                        • {cause}
+                      </Typography>
+                    ))}
+
+                    <Typography sx={{ fontWeight: 700, mt: 1.2, mb: 0.6 }}>Suggested actions:</Typography>
+                    {aiInsight.actions.map((action, idx) => (
+                      <Typography key={idx} sx={{ whiteSpace: "normal", overflowWrap: "anywhere", wordBreak: "break-word" }}>
+                        • {action}
+                      </Typography>
+                    ))}
+
+                    {aiInsight.model ? (
+                      <Typography variant="caption" sx={{ display: "block", mt: 1, color: "#6f7e99" }}>
+                        Model: {aiInsight.model}
+                      </Typography>
+                    ) : null}
+
+                    {aiInsight.fallbackReason ? (
+                      <Typography variant="caption" sx={{ display: "block", mt: 0.5, color: "#b45309" }}>
+                        Fallback: {aiInsight.fallbackReason}
+                      </Typography>
+                    ) : null}
+                  </Box>
+
+                  {/* Hidden for now: Quick Actions panel. */}
+                </Box>
+              ) : aiInsightError ? (
+                <Alert severity="warning" sx={{ borderRadius: 1.5 }}>
+                  {aiInsightError}
+                </Alert>
+              ) : (
+                <Box>
+                  <Typography sx={{ mb: 0.8 }}>{anomaly.reason || "No AI explanation available."}</Typography>
                   <Typography sx={{ fontWeight: 700, mt: 1.2, mb: 0.6 }}>Suggested actions:</Typography>
-                  {(anomaly.suggestions ?? []).slice(0, 3).map((s, idx) => (
-                    <Typography key={idx}>• {s}</Typography>
+                  {(anomaly.suggestions ?? []).slice(0, 3).map((action, idx) => (
+                    <Typography key={idx}>• {action}</Typography>
                   ))}
                 </Box>
-
-                <Box>
-                  <Card variant="outlined" sx={{ bgcolor: "#f0f4ff", borderColor: "#d0dbf8" }}>
-                    <CardContent>
-                      <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }}>
-                        Quick Actions
-                      </Typography>
-                      <Stack spacing={1}>
-                        <Button variant="outlined" fullWidth startIcon={<ChevronRightRoundedIcon />} onClick={quickActionFixAmount}>
-                          Fix Amount
-                        </Button>
-                        <Button variant="outlined" fullWidth startIcon={<ChevronRightRoundedIcon />} onClick={quickActionReassign}>
-                          Reassign Category
-                        </Button>
-                        <Button variant="outlined" fullWidth startIcon={<ChevronRightRoundedIcon />} onClick={quickActionMarkValid}>
-                          Mark as Valid Exception
-                        </Button>
-                      </Stack>
-                    </CardContent>
-                  </Card>
-                </Box>
-              </Box>
+              )}
             </CardContent>
           </Card>
         ) : null}
@@ -693,7 +764,7 @@ const ExpenseEditPage: React.FC<ExpenseEditProps> = () => {
         open={snackbar.open}
         message={snackbar.message}
         autoHideDuration={2600}
-        onClose={() => setSnackbar((s) => ({ ...s, open: false }))}
+        onClose={() => setSnackbar((state) => ({ ...state, open: false }))}
         anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
       />
     </Paper>

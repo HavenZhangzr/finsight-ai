@@ -1,6 +1,7 @@
 public interface IAiAssistantService
 {
     Task<string> GenerateAnswerAsync(string question, AiPromptContext context, CancellationToken cancellationToken = default);
+    Task<AnomalyExplainResponse> GenerateAnomalyExplanationAsync(AnomalyExplainRequest request, CancellationToken cancellationToken = default);
 }
 
 public class AiPromptContext

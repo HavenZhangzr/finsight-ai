@@ -80,6 +80,35 @@ public class AiController : ControllerBase
         });
     }
 
+    [HttpPost("explain-anomaly")]
+    public async Task<ActionResult<AnomalyExplainResponse>> ExplainAnomaly([FromBody] AnomalyExplainRequest request, CancellationToken cancellationToken)
+    {
+        if (request.Current <= 0)
+        {
+            return BadRequest(new { message = "Current amount must be greater than 0." });
+        }
+
+        var configuredModel = _config["OpenAI:Model"] ?? "gpt-4o-mini";
+        var useMockFallback = _config.GetValue<bool?>("OpenAI:UseMockFallback") ?? true;
+
+        try
+        {
+            var response = await _aiAssistant.GenerateAnomalyExplanationAsync(request, cancellationToken);
+            response.Model = configuredModel;
+            return Ok(response);
+        }
+        catch (Exception ex) when (useMockFallback)
+        {
+            var fallback = BuildAnomalyExplainMock(request);
+            fallback.Model = "Mock AI";
+            if (_env.IsDevelopment())
+            {
+                fallback.FallbackReason = ex.Message;
+            }
+            return Ok(fallback);
+        }
+    }
+
     private async Task<AiPromptContext> BuildPromptContextAsync(CancellationToken cancellationToken)
     {
         var now = DateTime.UtcNow.Date;
@@ -142,6 +171,40 @@ public class AiController : ControllerBase
             .Where(x => x.ZScore >= 1.8)
             .OrderByDescending(x => x.ZScore)
             .ToList();
+    }
+
+    private static AnomalyExplainResponse BuildAnomalyExplainMock(AnomalyExplainRequest request)
+    {
+        var deviationText = SignedPercent(request.Deviation);
+        var risk = string.IsNullOrWhiteSpace(request.RiskLevel) ? "Unknown" : request.RiskLevel;
+
+        var urgent = risk.Contains("高", StringComparison.OrdinalIgnoreCase) || request.Deviation >= 100;
+
+        return new AnomalyExplainResponse
+        {
+            Summary = "" +
+                request.Category + " spending is " + deviationText + " versus average ($" +
+                request.Avg.ToString("0.##") + " -> $" + request.Current.ToString("0.##") + "), classified as " + risk + ".",
+            Causes = new List<string>
+            {
+                "Potential one-time purchase or exceptional invoice.",
+                "Possible data entry issue (amount or category mismatch).",
+                "Unusual vendor or billing cycle timing."
+            },
+            Actions = urgent
+                ? new List<string>
+                {
+                    "Verify amount and source invoice immediately.",
+                    "Confirm whether this cost is one-time or recurring.",
+                    "Review category assignment before final approval."
+                }
+                : new List<string>
+                {
+                    "Review this entry against recent similar expenses.",
+                    "Validate supporting documents and vendor details.",
+                    "Monitor this category in the next cycle."
+                }
+        };
     }
 
     private static string BuildAnswerMock(
